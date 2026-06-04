@@ -388,3 +388,33 @@ button:hover {
   text-align: center;
 
 }
+
+.date-admin-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  gap: 15px;
+
+  border: 1px solid #4B6B3C;
+  border-radius: 8px;
+
+  background: #1E1E1E;
+
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.date-admin-row span {
+  color: #EAEAEA;
+}
+
+.danger-button {
+  background: #8B1E1E;
+  width: auto;
+  min-width: 130px;
+}
+
+.danger-button:hover {
+  background: #A52828;
+}

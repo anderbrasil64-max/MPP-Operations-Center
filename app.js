@@ -1,4 +1,4 @@
-const VERSION_SITE = "Alpha 0.1.1";
+const VERSION_SITE = "Alpha 0.1.2";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2WoCZmifII1DiJqeLpBZ0S0SRj8RC2PFq-aw-V9EjLU_jeA/exec";
 
@@ -1266,7 +1266,15 @@ function afficherGestionDatesCompetition(idCompetition, nomCompetition) {
       }
 
       data.dates.forEach(function(date) {
-        html += `<p>📅 ${date.dateAffichage} — ${date.dateCompetition}</p>`;
+        html += `
+  <div class="date-admin-row">
+    <span>📅 ${date.dateAffichage} — ${date.dateCompetition}</span>
+
+    <button class="danger-button" onclick="confirmerSuppressionDate(${date.idDate}, ${idCompetition}, '${nomCompetition.replace(/'/g, "\\'")}')">
+      🗑️ Supprimer
+    </button>
+  </div>
+`;
       });
 
       html += `
@@ -1351,6 +1359,44 @@ function ajouterDateDepuisSite(idCompetition, nomCompetition) {
       afficherMessageModal(
         "Date ajoutée",
         "La date a bien été ajoutée à la compétition.",
+        function() {
+          afficherGestionDatesCompetition(idCompetition, nomCompetition);
+        }
+      );
+    }
+  );
+}
+
+function confirmerSuppressionDate(idDate, idCompetition, nomCompetition) {
+
+  afficherConfirmation(
+    "Supprimer la date ?",
+    "Cette action supprimera la date de la compétition. Confirmer ?",
+    function() {
+      supprimerDateDepuisSite(idDate, idCompetition, nomCompetition);
+    }
+  );
+}
+
+
+function supprimerDateDepuisSite(idDate, idCompetition, nomCompetition) {
+
+  appelAPI(
+    "supprimerDateCompetition",
+    {
+      idDate: idDate,
+      utilisateur: utilisateurConnecte.joueur.pseudo
+    },
+    function(data) {
+
+      if (!data.succes) {
+        afficherMessageModal("Erreur", data.message);
+        return;
+      }
+
+      afficherMessageModal(
+        "Date supprimée",
+        "La date a bien été supprimée.",
         function() {
           afficherGestionDatesCompetition(idCompetition, nomCompetition);
         }
