@@ -376,3 +376,15 @@ button:hover {
   width: auto;
   margin: 0;
 }
+
+#version-site {
+
+  margin-top: 10px;
+
+  font-size: 12px;
+
+  color: #AAAAAA;
+
+  text-align: center;
+
+}

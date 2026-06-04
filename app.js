@@ -1,3 +1,5 @@
+const VERSION_SITE = "Alpha 0.1.0";
+
 const API_URL = "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2WoCZmifII1DiJqeLpBZ0S0SRj8RC2PFq-aw-V9EjLU_jeA/exec";
 
 let utilisateurConnecte = null;
@@ -8,6 +10,7 @@ let utilisateurConnecte = null;
  */
 window.onload = function() {
   afficherConnexion();
+  afficherVersionSite();
 };
 
 
@@ -1283,4 +1286,17 @@ function afficherGestionDatesCompetition(idCompetition, nomCompetition) {
       contenu.innerHTML = html;
     }
   );
+}
+
+function afficherVersionSite() {
+
+  const elementVersion =
+    document.getElementById("version-site");
+
+  if (elementVersion) {
+
+    elementVersion.textContent =
+      "Version " + VERSION_SITE;
+
+  }
 }
