@@ -1299,3 +1299,62 @@ function afficherVersionSite() {
 
   }
 }
+
+function afficherFormulaireAjoutDate(idCompetition, nomCompetition) {
+
+  definirModeCarte("large");
+
+  const contenu = document.getElementById("contenu");
+
+  contenu.innerHTML = `
+    <div class="form-zone">
+      <h2>Ajouter une date</h2>
+      <p>Compétition : ${nomCompetition}</p>
+
+      <label for="nouvelleDateCompetition">Date</label>
+      <input type="date" id="nouvelleDateCompetition">
+
+      <button onclick="ajouterDateDepuisSite(${idCompetition}, '${nomCompetition.replace(/'/g, "\\'")}')">
+        Ajouter la date
+      </button>
+
+      <button onclick="afficherGestionDatesCompetition(${idCompetition}, '${nomCompetition.replace(/'/g, "\\'")}')" class="secondary-button">
+        Annuler
+      </button>
+    </div>
+  `;
+}
+
+function ajouterDateDepuisSite(idCompetition, nomCompetition) {
+
+  const dateChoisie = document.getElementById("nouvelleDateCompetition").value;
+
+  if (dateChoisie === "") {
+    afficherMessageModal("Erreur", "Merci de sélectionner une date.");
+    return;
+  }
+
+  appelAPI(
+    "ajouterDateCompetition",
+    {
+      idCompetition: idCompetition,
+      dateCompetition: dateChoisie,
+      utilisateur: utilisateurConnecte.joueur.pseudo
+    },
+    function(data) {
+
+      if (!data.succes) {
+        afficherMessageModal("Erreur", data.message);
+        return;
+      }
+
+      afficherMessageModal(
+        "Date ajoutée",
+        "La date a bien été ajoutée à la compétition.",
+        function() {
+          afficherGestionDatesCompetition(idCompetition, nomCompetition);
+        }
+      );
+    }
+  );
+}
