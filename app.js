@@ -1,4 +1,4 @@
-const VERSION_SITE = "Alpha 0.1.4";
+const VERSION_SITE = "Alpha 0.2.0";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2WoCZmifII1DiJqeLpBZ0S0SRj8RC2PFq-aw-V9EjLU_jeA/exec";
 
@@ -208,7 +208,8 @@ function ouvrirCompetition(idCompetition, nomCompetition) {
 
 function afficherFormulairePresences(idCompetition, nomCompetition, dates, presencesExistantes) {
 
-	definirModeCarte("normal");
+  definirModeCarte("normal");
+
   const contenu = document.getElementById("contenu");
 
   let html = `
@@ -224,12 +225,26 @@ function afficherFormulairePresences(idCompetition, nomCompetition, dates, prese
   dates.forEach(function(date) {
 
     const dateTexte = String(date.dateCompetition).trim();
-	const dateAffichage = date.dateAffichage || dateTexte;
+    const dateAffichage = date.dateAffichage || dateTexte;
+
+    const horaires = String(date.horaires || "")
+      .split(",")
+      .map(function(h) { return h.trim(); })
+      .filter(function(h) { return h !== ""; });
+
     let statutActuel = "Non renseigné";
+    let horairesActuels = [];
 
     presencesExistantes.forEach(function(presence) {
+
       if (String(presence.dateCompetition).trim() === dateTexte) {
+
         statutActuel = presence.statut;
+
+        horairesActuels = String(presence.horairesDisponibles || "")
+          .split(",")
+          .map(function(h) { return h.trim(); })
+          .filter(function(h) { return h !== ""; });
       }
     });
 
@@ -237,13 +252,38 @@ function afficherFormulairePresences(idCompetition, nomCompetition, dates, prese
       <div class="date-card">
         <h3>${dateAffichage}</h3>
 
-        <select class="select-statut" data-date="${dateTexte}">
+        <select class="select-statut" data-date="${dateTexte}" onchange="gererAffichageHoraires(this)">
           <option value="Non renseigné" ${statutActuel === "Non renseigné" ? "selected" : ""}>⚪ Non renseigné</option>
           <option value="Présent" ${statutActuel === "Présent" ? "selected" : ""}>🟢 Présent</option>
           <option value="Absent" ${statutActuel === "Absent" ? "selected" : ""}>🔴 Absent</option>
-          <option value="Présent mais en retard" ${statutActuel === "Présent mais en retard" ? "selected" : ""}>🟠 Présent mais en retard</option>
           <option value="Remplaçant" ${statutActuel === "Remplaçant" ? "selected" : ""}>🔵 Remplaçant</option>
         </select>
+
+        <div class="horaires-zone" style="${statutActuel === "Présent" ? "" : "display:none;"}">
+          <p>Créneaux disponibles :</p>
+
+          <div class="horaires-selection">
+    `;
+
+    if (horaires.length === 0) {
+      html += `<p>Aucun horaire défini pour cette date.</p>`;
+    }
+
+    horaires.forEach(function(horaire) {
+
+      const checked = horairesActuels.includes(horaire) ? "checked" : "";
+
+      html += `
+        <label class="checkbox-role">
+          <input type="checkbox" class="horaire-checkbox" value="${horaire}" ${checked}>
+          ${horaire}
+        </label>
+      `;
+    });
+
+    html += `
+          </div>
+        </div>
       </div>
     `;
   });
@@ -263,33 +303,45 @@ function afficherFormulairePresences(idCompetition, nomCompetition, dates, prese
 }
 
 function afficherRecapitulatif(idCompetition, nomCompetition) {
-	
-	definirModeCarte("normal");
+
   const selects = document.querySelectorAll(".select-statut");
   const presences = [];
 
   let nbPresent = 0;
   let nbAbsent = 0;
-  let nbRetard = 0;
   let nbRemplacant = 0;
   let nbNonRenseigne = 0;
 
   selects.forEach(function(select) {
 
+    const dateCard = select.closest(".date-card");
+
     const dateCompetition = select.dataset.date;
     const statut = select.value;
 
+    let horairesDisponibles = [];
+
+    if (statut === "Présent") {
+
+      const casesHoraires = dateCard.querySelectorAll(".horaire-checkbox");
+
+      casesHoraires.forEach(function(caseHoraire) {
+        if (caseHoraire.checked) {
+          horairesDisponibles.push(caseHoraire.value);
+        }
+      });
+    }
+
     presences.push({
       dateCompetition: dateCompetition,
-      statut: statut
+      statut: statut,
+      horairesDisponibles: horairesDisponibles.join(",")
     });
 
     if (statut === "Présent") {
       nbPresent++;
     } else if (statut === "Absent") {
       nbAbsent++;
-    } else if (statut === "Présent mais en retard") {
-      nbRetard++;
     } else if (statut === "Remplaçant") {
       nbRemplacant++;
     } else {
@@ -306,8 +358,20 @@ function afficherRecapitulatif(idCompetition, nomCompetition) {
   `;
 
   presences.forEach(function(presence) {
+
+    let texteHoraires = "";
+
+    if (presence.statut === "Présent") {
+      texteHoraires = presence.horairesDisponibles
+        ? ` — Horaires : ${presence.horairesDisponibles}`
+        : " — Aucun horaire sélectionné";
+    }
+
     html += `
-      <p><strong>${presence.dateCompetition}</strong> → ${presence.statut}</p>
+      <p>
+        <strong>${presence.dateCompetition}</strong>
+        → ${presence.statut}${texteHoraires}
+      </p>
     `;
   });
 
@@ -317,7 +381,6 @@ function afficherRecapitulatif(idCompetition, nomCompetition) {
       <div class="recap-box">
         <p>🟢 Présent : ${nbPresent}</p>
         <p>🔴 Absent : ${nbAbsent}</p>
-        <p>🟠 Retard : ${nbRetard}</p>
         <p>🔵 Remplaçant : ${nbRemplacant}</p>
         <p>⚪ Non renseigné : ${nbNonRenseigne}</p>
       </div>
@@ -391,35 +454,85 @@ function confirmerPresences(idCompetition, presencesJSON) {
  */
 function afficherEspaceOfficier() {
 
-	definirModeCarte("large");
+  definirModeCarte("large");
+
   const contenu = document.getElementById("contenu");
 
   contenu.innerHTML = `
     <div class="form-zone">
-      <h2>Espace officier</h2>
-      <p>Connecté en tant que : ${utilisateurConnecte.joueur.pseudo}</p>
-
-      <button onclick="afficherSelectionCompetitionOfficier()">
-        👥 Consulter les présences
-      </button>
-
-      <button class="secondary-button" onclick="afficherGestionCompetitions()">
-		📅 Gérer les compétitions
-		</button>
-
-      <button class="secondary-button" onclick="alert('Statistiques avancées prévues dans une prochaine étape.')">
-        📊 Statistiques
-      </button>
-
-      <button class="secondary-button" onclick="afficherGestionJoueurs()">
-		👥 Gérer les joueurs
-	</button>
-
-      <button onclick="afficherChoixOfficier()" class="secondary-button">
-        Retour
-      </button>
+      <h2>Tableau de bord officier</h2>
+      <p>Chargement...</p>
     </div>
   `;
+
+  appelAPI(
+    "chargerTableauDeBord",
+    {},
+    function(data) {
+
+      if (!data.succes) {
+        afficherMessageModal("Erreur", data.message);
+        return;
+      }
+
+      contenu.innerHTML = `
+        <div class="form-zone">
+          <h2>Tableau de bord officier</h2>
+          <p>Connecté en tant que : ${utilisateurConnecte.joueur.pseudo}</p>
+
+          <div class="dashboard-grid">
+
+            <div class="dashboard-card">
+              <h3>👥 Joueurs</h3>
+              <p>Total : ${data.joueurs.total}</p>
+              <p>🟢 Actifs : ${data.joueurs.actifs}</p>
+              <p>⚪ Inactifs : ${data.joueurs.inactifs}</p>
+              <p>🔴 Suspendus : ${data.joueurs.suspendus}</p>
+            </div>
+
+            <div class="dashboard-card">
+              <h3>📡 Activité</h3>
+              <p>Connectés ≤ 7 jours : ${data.joueurs.connectes7Jours}</p>
+              <p>Connectés ≤ 30 jours : ${data.joueurs.connectes30Jours}</p>
+              <p>Inactifs > 30 jours : ${data.joueurs.inactifs30Jours}</p>
+              <p>Jamais connectés : ${data.joueurs.jamaisConnectes}</p>
+            </div>
+
+            <div class="dashboard-card">
+              <h3>🏆 Compétitions</h3>
+              <p>🟢 Ouvertes : ${data.competitions.ouvertes}</p>
+              <p>🟠 Brouillons : ${data.competitions.brouillon}</p>
+              <p>🔒 Fermées : ${data.competitions.fermees}</p>
+              <p>📦 Archivées : ${data.competitions.archivees}</p>
+            </div>
+
+          </div>
+
+          <div class="table-actions">
+            <button onclick="afficherSelectionCompetitionOfficier()">
+              👥 Consulter les présences
+            </button>
+
+            <button class="secondary-button" onclick="afficherGestionCompetitions()">
+              📅 Gérer les compétitions
+            </button>
+
+            <button class="secondary-button" onclick="afficherGestionJoueurs()">
+              👥 Gérer les joueurs
+            </button>
+
+            <button class="secondary-button" onclick="afficherJournalActivite()">
+  📜 Journal d'activité
+</button>
+          </div>
+
+          <button onclick="afficherChoixOfficier()" class="secondary-button">
+            Retour
+          </button>
+        </div>
+      `;
+    }
+  );
 }
 
 /**
@@ -1109,51 +1222,81 @@ function afficherFormulaireCreationCompetition() {
     <div class="form-zone">
       <h2>Créer une compétition</h2>
 
-      <label for="nomCompetition">Nom de la compétition</label>
-      <input type="text" id="nomCompetition" placeholder="Ex : Campagne Juin 2026">
+      <div class="stats-box">
+        <h3>1. Informations générales</h3>
 
-      <label for="descriptionCompetition">Description</label>
-      <input type="text" id="descriptionCompetition" placeholder="Ex : Campagne principale du clan MPP">
+        <label for="nomCompetition">Nom de la compétition</label>
+        <input type="text" id="nomCompetition" placeholder="Ex : Campagne Juin 2026">
 
-     <label>Rôles autorisés</label>
+        <label for="descriptionCompetition">Description</label>
+        <input type="text" id="descriptionCompetition" placeholder="Ex : Campagne principale du clan MPP">
 
-<div class="roles-selection">
-  <label class="checkbox-role">
-    <input type="checkbox" id="roleOfficier" checked>
-    Officier
-  </label>
+        <label>Rôles autorisés</label>
 
-  <label class="checkbox-role">
-    <input type="checkbox" id="roleStrateur" checked>
-    Strateur
-  </label>
+        <div class="roles-selection">
+          <label class="checkbox-role">
+            <input type="checkbox" id="roleOfficier" checked>
+            Officier
+          </label>
 
-  <label class="checkbox-role">
-    <input type="checkbox" id="roleSoldat" checked>
-    Soldat
-  </label>
+          <label class="checkbox-role">
+            <input type="checkbox" id="roleStrateur" checked>
+            Strateur
+          </label>
 
-  <label class="checkbox-role">
-    <input type="checkbox" id="roleReserviste">
-    Réserviste
-  </label>
+          <label class="checkbox-role">
+            <input type="checkbox" id="roleSoldat" checked>
+            Soldat
+          </label>
 
-  <label class="checkbox-role">
-    <input type="checkbox" id="roleRecrue">
-    Recrue
-  </label>
-</div>
+          <label class="checkbox-role">
+            <input type="checkbox" id="roleReserviste">
+            Réserviste
+          </label>
 
-      <label for="statutCompetition">Statut initial</label>
-      <select id="statutCompetition">
-        <option value="Brouillon">Brouillon</option>
-        <option value="Ouverte">Ouverte</option>
-        <option value="Fermée">Fermée</option>
-        <option value="Archivée">Archivée</option>
-      </select>
+          <label class="checkbox-role">
+            <input type="checkbox" id="roleRecrue">
+            Recrue
+          </label>
+        </div>
 
-      <button onclick="creerCompetitionDepuisSite()">
-        Créer la compétition
+        <label for="statutCompetition">Statut initial</label>
+        <select id="statutCompetition">
+          <option value="Brouillon">Brouillon</option>
+          <option value="Ouverte">Ouverte</option>
+          <option value="Fermée">Fermée</option>
+          <option value="Archivée">Archivée</option>
+        </select>
+      </div>
+
+      <div class="stats-box">
+        <h3>2. Calendrier</h3>
+
+        <label for="dateDebutCompetition">Date de début</label>
+        <input type="date" id="dateDebutCompetition">
+
+        <label for="dateFinCompetition">Date de fin</label>
+        <input type="date" id="dateFinCompetition">
+
+        <label>Jours concernés</label>
+
+        <div class="roles-selection">
+          <label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="1" checked> Lundi</label>
+          <label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="2" checked> Mardi</label>
+          <label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="3" checked> Mercredi</label>
+          <label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="4" checked> Jeudi</label>
+          <label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="5" checked> Vendredi</label>
+          <label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="6"> Samedi</label>
+          <label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="0"> Dimanche</label>
+        </div>
+
+        <label for="horairesCompetition">Horaires</label>
+        <input type="text" id="horairesCompetition" value="21:00,21:15,21:30">
+        <p>Format attendu : 21:00,21:15,21:30</p>
+      </div>
+
+      <button onclick="previsualiserCreationCompetition()">
+        Prévisualiser la création
       </button>
 
       <button onclick="afficherGestionCompetitions()" class="secondary-button">
@@ -1163,66 +1306,48 @@ function afficherFormulaireCreationCompetition() {
   `;
 }
 
-function creerCompetitionDepuisSite() {
+function confirmerCreationCompetitionComplete(configJSON) {
 
-  const nom = document.getElementById("nomCompetition").value.trim();
-  const description = document.getElementById("descriptionCompetition").value.trim();
-  const roles = [];
-
-if (document.getElementById("roleOfficier").checked) {
-  roles.push("Officier");
-}
-
-if (document.getElementById("roleStrateur").checked) {
-  roles.push("Strateur");
-}
-
-if (document.getElementById("roleSoldat").checked) {
-  roles.push("Soldat");
-}
-
-if (document.getElementById("roleReserviste").checked) {
-  roles.push("Réserviste");
-}
-
-if (document.getElementById("roleRecrue").checked) {
-  roles.push("Recrue");
-}
-
-const rolesAutorises = roles.join(",");
-
-if (rolesAutorises === "") {
-  afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle autorisé.");
-  return;
-}
-  const statut = document.getElementById("statutCompetition").value;
-
-  if (nom === "") {
-    afficherMessageModal("Erreur", "Merci de saisir un nom de compétition.");
-    return;
-  }
+  const config = JSON.parse(configJSON);
 
   appelAPI(
     "creerCompetition",
     {
-      nom: nom,
-      statut: statut,
+      nom: config.nom,
+      statut: config.statut,
       creePar: utilisateurConnecte.joueur.pseudo,
-      rolesAutorises: rolesAutorises,
-      description: description
+      rolesAutorises: config.rolesAutorises,
+      description: config.description
     },
-    function(data) {
+    function(dataCompetition) {
 
-      if (!data.succes) {
-        afficherMessageModal("Erreur", data.message);
+      if (!dataCompetition.succes) {
+        afficherMessageModal("Erreur", dataCompetition.message);
         return;
       }
 
-      afficherMessageModal(
-        "Compétition créée",
-        "La compétition a bien été créée.",
-        function() {
-          afficherGestionCompetitions();
+      appelAPI(
+        "ajouterDatesMultiplesCompetition",
+        {
+          idCompetition: dataCompetition.idCompetition,
+          dates: JSON.stringify(config.dates),
+          horaires: config.horaires,
+          utilisateur: utilisateurConnecte.joueur.pseudo
+        },
+        function(dataDates) {
+
+          if (!dataDates.succes) {
+            afficherMessageModal("Erreur", dataDates.message);
+            return;
+          }
+
+          afficherMessageModal(
+            "Compétition créée",
+            "La compétition et ses dates ont bien été créées.",
+            function() {
+              afficherGestionCompetitions();
+            }
+          );
         }
       );
     }
@@ -1444,6 +1569,7 @@ function afficherGestionJoueurs() {
                   <th>Rôles</th>
                   <th>Statut</th>
                   <th>Dernière modification</th>
+					<th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1456,6 +1582,11 @@ function afficherGestionJoueurs() {
             <td>${joueur.roles}</td>
             <td>${joueur.statut}</td>
             <td>${joueur.derniereModification || "-"}</td>
+			<td>
+			<button class="secondary-button" onclick='afficherFormulaireModificationJoueur(${JSON.stringify(joueur)})'>
+				✏️ Modifier
+			</button>
+</td>
           </tr>
         `;
       });
@@ -1597,4 +1728,393 @@ function ajouterJoueurDepuisSite() {
       );
     }
   );
+}
+
+function afficherFormulaireModificationJoueur(joueur) {
+
+  definirModeCarte("large");
+
+  const contenu = document.getElementById("contenu");
+
+  const rolesActuels = String(joueur.roles || "");
+
+  contenu.innerHTML = `
+    <div class="form-zone">
+      <h2>Modifier un joueur</h2>
+
+      <label for="modifierPseudoJoueur">Pseudo WoT</label>
+      <input type="text" id="modifierPseudoJoueur" value="${joueur.pseudo}">
+
+      <label>Rôles</label>
+
+      <div class="roles-selection">
+        <label class="checkbox-role">
+          <input type="checkbox" id="modifierRoleOfficier" ${rolesActuels.includes("Officier") ? "checked" : ""}>
+          Officier
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="modifierRoleStrateur" ${rolesActuels.includes("Strateur") ? "checked" : ""}>
+          Strateur
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="modifierRoleSoldat" ${rolesActuels.includes("Soldat") ? "checked" : ""}>
+          Soldat
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="modifierRoleReserviste" ${rolesActuels.includes("Réserviste") ? "checked" : ""}>
+          Réserviste
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="modifierRoleRecrue" ${rolesActuels.includes("Recrue") ? "checked" : ""}>
+          Recrue
+        </label>
+      </div>
+
+      <label for="modifierStatutJoueur">Statut</label>
+      <select id="modifierStatutJoueur">
+        <option value="Actif" ${joueur.statut === "Actif" ? "selected" : ""}>Actif</option>
+        <option value="Inactif" ${joueur.statut === "Inactif" ? "selected" : ""}>Inactif</option>
+        <option value="Suspendu" ${joueur.statut === "Suspendu" ? "selected" : ""}>Suspendu</option>
+      </select>
+
+      <button onclick="modifierJoueurDepuisSite(${joueur.id})">
+        Enregistrer les modifications
+      </button>
+
+      <button onclick="afficherGestionJoueurs()" class="secondary-button">
+        Annuler
+      </button>
+    </div>
+  `;
+}
+
+function modifierJoueurDepuisSite(idJoueur) {
+
+  const pseudo = document.getElementById("modifierPseudoJoueur").value.trim();
+  const statut = document.getElementById("modifierStatutJoueur").value;
+
+  const roles = [];
+
+  if (document.getElementById("modifierRoleOfficier").checked) {
+    roles.push("Officier");
+  }
+
+  if (document.getElementById("modifierRoleStrateur").checked) {
+    roles.push("Strateur");
+  }
+
+  if (document.getElementById("modifierRoleSoldat").checked) {
+    roles.push("Soldat");
+  }
+
+  if (document.getElementById("modifierRoleReserviste").checked) {
+    roles.push("Réserviste");
+  }
+
+  if (document.getElementById("modifierRoleRecrue").checked) {
+    roles.push("Recrue");
+  }
+
+  if (pseudo === "") {
+    afficherMessageModal("Erreur", "Merci de saisir un pseudo.");
+    return;
+  }
+
+  if (roles.length === 0) {
+    afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle.");
+    return;
+  }
+
+  appelAPI(
+    "modifierJoueur",
+    {
+      idJoueur: idJoueur,
+      pseudo: pseudo,
+      roles: roles.join(","),
+      statut: statut,
+      utilisateur: utilisateurConnecte.joueur.pseudo
+    },
+    function(data) {
+
+      if (!data.succes) {
+        afficherMessageModal("Erreur", data.message);
+        return;
+      }
+
+      afficherMessageModal(
+        "Joueur modifié",
+        "Les informations du joueur ont bien été mises à jour.",
+        function() {
+          afficherGestionJoueurs();
+        }
+      );
+    }
+  );
+}
+
+function afficherJournalActivite() {
+
+  definirModeCarte("large");
+
+  const contenu = document.getElementById("contenu");
+
+  contenu.innerHTML = `
+    <div class="form-zone">
+      <h2>Journal d'activité</h2>
+      <p>Chargement des 50 dernières actions...</p>
+    </div>
+  `;
+
+  appelAPI(
+    "chargerJournalActivite",
+    {},
+    function(data) {
+
+      if (!data.succes) {
+        afficherMessageModal("Erreur", data.message);
+        return;
+      }
+
+      let html = `
+        <div class="form-zone">
+          <h2>Journal d'activité</h2>
+          <p>50 dernières actions enregistrées.</p>
+
+          <div class="table-container">
+            <table class="presence-table">
+              <thead>
+                <tr>
+                  <th>Date / Heure</th>
+                  <th>Utilisateur</th>
+                  <th>Action</th>
+                  <th>Détails</th>
+                </tr>
+              </thead>
+              <tbody>
+      `;
+
+      if (data.journal.length === 0) {
+        html += `
+          <tr>
+            <td colspan="4">Aucune action enregistrée.</td>
+          </tr>
+        `;
+      }
+
+      data.journal.forEach(function(entree) {
+        html += `
+          <tr>
+            <td>${entree.dateHeure}</td>
+            <td>${entree.utilisateur}</td>
+            <td>${entree.action}</td>
+            <td>${entree.details}</td>
+          </tr>
+        `;
+      });
+
+      html += `
+              </tbody>
+            </table>
+          </div>
+
+          <button onclick="afficherEspaceOfficier()" class="secondary-button">
+            Retour
+          </button>
+        </div>
+      `;
+
+      contenu.innerHTML = html;
+    }
+  );
+}
+
+function gererAffichageHoraires(selectElement) {
+
+  const dateCard = selectElement.closest(".date-card");
+  const horairesZone = dateCard.querySelector(".horaires-zone");
+
+  if (!horairesZone) {
+    return;
+  }
+
+  if (selectElement.value === "Présent") {
+    horairesZone.style.display = "";
+  } else {
+    horairesZone.style.display = "none";
+
+    const cases = horairesZone.querySelectorAll(".horaire-checkbox");
+
+    cases.forEach(function(caseHoraire) {
+      caseHoraire.checked = false;
+    });
+  }
+}
+
+function previsualiserCreationCompetition() {
+
+  const nom = document.getElementById("nomCompetition").value.trim();
+  const description = document.getElementById("descriptionCompetition").value.trim();
+  const statut = document.getElementById("statutCompetition").value;
+
+  const dateDebut = document.getElementById("dateDebutCompetition").value;
+  const dateFin = document.getElementById("dateFinCompetition").value;
+  const horaires = document.getElementById("horairesCompetition").value.trim();
+
+  const roles = recupererRolesCreationCompetition();
+  const joursSelectionnes = recupererJoursSelectionnes();
+
+  if (nom === "") {
+    afficherMessageModal("Erreur", "Merci de saisir un nom de compétition.");
+    return;
+  }
+
+  if (roles.length === 0) {
+    afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle autorisé.");
+    return;
+  }
+
+  if (dateDebut === "" || dateFin === "") {
+    afficherMessageModal("Erreur", "Merci de sélectionner une date de début et une date de fin.");
+    return;
+  }
+
+  if (new Date(dateFin) < new Date(dateDebut)) {
+    afficherMessageModal("Erreur", "La date de fin doit être après la date de début.");
+    return;
+  }
+
+  if (joursSelectionnes.length === 0) {
+    afficherMessageModal("Erreur", "Merci de sélectionner au moins un jour concerné.");
+    return;
+  }
+
+  if (horaires === "") {
+    afficherMessageModal("Erreur", "Merci de saisir au moins un horaire.");
+    return;
+  }
+
+  const datesGenerees = genererDatesDepuisPeriode(dateDebut, dateFin, joursSelectionnes);
+
+  if (datesGenerees.length === 0) {
+    afficherMessageModal("Erreur", "Aucune date générée avec ces paramètres.");
+    return;
+  }
+
+  afficherRecapCreationCompetition({
+    nom: nom,
+    description: description,
+    statut: statut,
+    rolesAutorises: roles.join(","),
+    dates: datesGenerees,
+    horaires: horaires
+  });
+}
+
+
+function recupererRolesCreationCompetition() {
+
+  const roles = [];
+
+  if (document.getElementById("roleOfficier").checked) {
+    roles.push("Officier");
+  }
+
+  if (document.getElementById("roleStrateur").checked) {
+    roles.push("Strateur");
+  }
+
+  if (document.getElementById("roleSoldat").checked) {
+    roles.push("Soldat");
+  }
+
+  if (document.getElementById("roleReserviste").checked) {
+    roles.push("Réserviste");
+  }
+
+  if (document.getElementById("roleRecrue").checked) {
+    roles.push("Recrue");
+  }
+
+  return roles;
+}
+
+
+function recupererJoursSelectionnes() {
+
+  const cases = document.querySelectorAll(".jour-checkbox");
+  const jours = [];
+
+  cases.forEach(function(caseJour) {
+    if (caseJour.checked) {
+      jours.push(Number(caseJour.value));
+    }
+  });
+
+  return jours;
+}
+
+
+function genererDatesDepuisPeriode(dateDebut, dateFin, joursSelectionnes) {
+
+  const dates = [];
+
+  const dateCourante = new Date(dateDebut + "T00:00:00");
+  const dateLimite = new Date(dateFin + "T00:00:00");
+
+  while (dateCourante <= dateLimite) {
+
+    const jourSemaine = dateCourante.getDay();
+
+    if (joursSelectionnes.includes(jourSemaine)) {
+      dates.push(dateCourante.toISOString().split("T")[0]);
+    }
+
+    dateCourante.setDate(dateCourante.getDate() + 1);
+  }
+
+  return dates;
+}
+
+
+function afficherRecapCreationCompetition(config) {
+
+  definirModeCarte("large");
+
+  let htmlDates = "";
+
+  config.dates.forEach(function(date) {
+    htmlDates += `<p>📅 ${date}</p>`;
+  });
+
+  document.getElementById("contenu").innerHTML = `
+    <div class="form-zone">
+      <h2>Prévisualisation</h2>
+
+      <div class="stats-box">
+        <h3>${config.nom}</h3>
+        <p>${config.description}</p>
+        <p>Statut : ${config.statut}</p>
+        <p>Rôles autorisés : ${config.rolesAutorises}</p>
+        <p>Horaires : ${config.horaires}</p>
+        <p>Nombre de dates générées : ${config.dates.length}</p>
+      </div>
+
+      <div class="stats-box">
+        <h3>Dates générées</h3>
+        ${htmlDates}
+      </div>
+
+      <button onclick='confirmerCreationCompetitionComplete(${JSON.stringify(JSON.stringify(config))})'>
+        Confirmer la création
+      </button>
+
+      <button onclick="afficherFormulaireCreationCompetition()" class="secondary-button">
+        Modifier
+      </button>
+    </div>
+  `;
 }
