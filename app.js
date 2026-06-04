@@ -1,4 +1,4 @@
-const VERSION_SITE = "Alpha 0.1.2";
+const VERSION_SITE = "Alpha 0.1.4";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2WoCZmifII1DiJqeLpBZ0S0SRj8RC2PFq-aw-V9EjLU_jeA/exec";
 
@@ -411,9 +411,9 @@ function afficherEspaceOfficier() {
         📊 Statistiques
       </button>
 
-      <button class="secondary-button" onclick="alert('Administration prévue dans une prochaine étape.')">
-        ⚙️ Administration
-      </button>
+      <button class="secondary-button" onclick="afficherGestionJoueurs()">
+		👥 Gérer les joueurs
+	</button>
 
       <button onclick="afficherChoixOfficier()" class="secondary-button">
         Retour
@@ -1399,6 +1399,200 @@ function supprimerDateDepuisSite(idDate, idCompetition, nomCompetition) {
         "La date a bien été supprimée.",
         function() {
           afficherGestionDatesCompetition(idCompetition, nomCompetition);
+        }
+      );
+    }
+  );
+}
+
+function afficherGestionJoueurs() {
+
+  definirModeCarte("large");
+
+  const contenu = document.getElementById("contenu");
+
+  contenu.innerHTML = `
+    <div class="form-zone">
+      <h2>Gestion des joueurs</h2>
+      <p>Chargement...</p>
+    </div>
+  `;
+
+  appelAPI(
+    "chargerJoueurs",
+    {},
+    function(data) {
+
+      if (!data.succes) {
+        afficherMessageModal("Erreur", data.message);
+        return;
+      }
+
+      let html = `
+        <div class="form-zone">
+          <h2>Gestion des joueurs</h2>
+
+          <button onclick="afficherFormulaireAjoutJoueur()">
+  ➕ Ajouter un joueur
+</button>
+
+          <div class="table-container">
+            <table class="presence-table">
+              <thead>
+                <tr>
+                  <th>Pseudo</th>
+                  <th>Rôles</th>
+                  <th>Statut</th>
+                  <th>Dernière modification</th>
+                </tr>
+              </thead>
+              <tbody>
+      `;
+
+      data.joueurs.forEach(function(joueur) {
+        html += `
+          <tr>
+            <td>${joueur.pseudo}</td>
+            <td>${joueur.roles}</td>
+            <td>${joueur.statut}</td>
+            <td>${joueur.derniereModification || "-"}</td>
+          </tr>
+        `;
+      });
+
+      html += `
+              </tbody>
+            </table>
+          </div>
+
+          <button onclick="afficherEspaceOfficier()" class="secondary-button">
+            Retour
+          </button>
+        </div>
+      `;
+
+      contenu.innerHTML = html;
+    }
+  );
+}
+
+function afficherFormulaireAjoutJoueur() {
+
+  definirModeCarte("large");
+
+  const contenu = document.getElementById("contenu");
+
+  contenu.innerHTML = `
+    <div class="form-zone">
+      <h2>Ajouter un joueur</h2>
+
+      <label for="nouveauPseudoJoueur">Pseudo WoT</label>
+      <input type="text" id="nouveauPseudoJoueur" placeholder="Ex : NouveauJoueur">
+
+      <label>Rôles</label>
+
+      <div class="roles-selection">
+        <label class="checkbox-role">
+          <input type="checkbox" id="joueurRoleOfficier">
+          Officier
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="joueurRoleStrateur">
+          Strateur
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="joueurRoleSoldat" checked>
+          Soldat
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="joueurRoleReserviste">
+          Réserviste
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="joueurRoleRecrue">
+          Recrue
+        </label>
+      </div>
+
+      <label for="nouveauStatutJoueur">Statut</label>
+      <select id="nouveauStatutJoueur">
+        <option value="Actif">Actif</option>
+        <option value="Inactif">Inactif</option>
+        <option value="Suspendu">Suspendu</option>
+      </select>
+
+      <button onclick="ajouterJoueurDepuisSite()">
+        Créer le joueur
+      </button>
+
+      <button onclick="afficherGestionJoueurs()" class="secondary-button">
+        Annuler
+      </button>
+    </div>
+  `;
+}
+
+function ajouterJoueurDepuisSite() {
+
+  const pseudo = document.getElementById("nouveauPseudoJoueur").value.trim();
+  const statut = document.getElementById("nouveauStatutJoueur").value;
+
+  const roles = [];
+
+  if (document.getElementById("joueurRoleOfficier").checked) {
+    roles.push("Officier");
+  }
+
+  if (document.getElementById("joueurRoleStrateur").checked) {
+    roles.push("Strateur");
+  }
+
+  if (document.getElementById("joueurRoleSoldat").checked) {
+    roles.push("Soldat");
+  }
+
+  if (document.getElementById("joueurRoleReserviste").checked) {
+    roles.push("Réserviste");
+  }
+
+  if (document.getElementById("joueurRoleRecrue").checked) {
+    roles.push("Recrue");
+  }
+
+  if (pseudo === "") {
+    afficherMessageModal("Erreur", "Merci de saisir un pseudo.");
+    return;
+  }
+
+  if (roles.length === 0) {
+    afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle.");
+    return;
+  }
+
+  appelAPI(
+    "ajouterJoueur",
+    {
+      pseudo: pseudo,
+      roles: roles.join(","),
+      statut: statut,
+      utilisateur: utilisateurConnecte.joueur.pseudo
+    },
+    function(data) {
+
+      if (!data.succes) {
+        afficherMessageModal("Erreur", data.message);
+        return;
+      }
+
+      afficherMessageModal(
+        "Joueur ajouté",
+        "Le joueur a bien été ajouté.",
+        function() {
+          afficherGestionJoueurs();
         }
       );
     }
