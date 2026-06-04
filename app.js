@@ -4,7 +4,6 @@ const API_URL = "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2
 
 let utilisateurConnecte = null;
 
-
 /**
  * Affiche la page de connexion au chargement du site.
  */
