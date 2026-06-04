@@ -1,24 +1,23 @@
 const VERSION_SITE = "Alpha 0.2.0";
 
-const API_URL = "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2WoCZmifII1DiJqeLpBZ0S0SRj8RC2PFq-aw-V9EjLU_jeA/exec";
+const API_URL =
+  "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2WoCZmifII1DiJqeLpBZ0S0SRj8RC2PFq-aw-V9EjLU_jeA/exec";
 
 let utilisateurConnecte = null;
 
 /**
  * Affiche la page de connexion au chargement du site.
  */
-window.onload = function() {
+window.onload = function () {
   afficherConnexion();
   afficherVersionSite();
 };
-
 
 /**
  * Affiche l'écran de connexion.
  */
 function afficherConnexion() {
-	
-	definirModeCarte("normal");
+  definirModeCarte("normal");
   const contenu = document.getElementById("contenu");
 
   contenu.innerHTML = `
@@ -33,12 +32,10 @@ function afficherConnexion() {
   `;
 }
 
-
 /**
  * Connexion par pseudo.
  */
 function connexion() {
-
   const pseudo = document.getElementById("pseudo").value.trim();
   const message = document.getElementById("message");
 
@@ -51,35 +48,28 @@ function connexion() {
   message.textContent = "Connexion en cours...";
   message.style.color = "#CFCFCF";
 
-  appelAPI(
-    "identifierUtilisateur",
-    { pseudo: pseudo },
-    function(data) {
-
-      if (!data.succes) {
-        message.textContent = data.message;
-        message.style.color = "#ff5555";
-        return;
-      }
-
-      utilisateurConnecte = data;
-
-      if (data.type === "officier") {
-        afficherChoixOfficier();
-      } else {
-        afficherCompetitionsJoueur();
-      }
+  appelAPI("identifierUtilisateur", { pseudo: pseudo }, function (data) {
+    if (!data.succes) {
+      message.textContent = data.message;
+      message.style.color = "#ff5555";
+      return;
     }
-  );
-}
 
+    utilisateurConnecte = data;
+
+    if (data.type === "officier") {
+      afficherChoixOfficier();
+    } else {
+      afficherCompetitionsJoueur();
+    }
+  });
+}
 
 /**
  * Si le pseudo est officier, on propose deux choix.
  */
 function afficherChoixOfficier() {
-	
-	definirModeCarte("normal");
+  definirModeCarte("normal");
   const contenu = document.getElementById("contenu");
 
   contenu.innerHTML = `
@@ -95,13 +85,11 @@ function afficherChoixOfficier() {
   `;
 }
 
-
 /**
  * Charge et affiche les compétitions disponibles.
  */
 function afficherCompetitionsJoueur() {
-	
-	definirModeCarte("normal");
+  definirModeCarte("normal");
   const contenu = document.getElementById("contenu");
 
   contenu.innerHTML = `
@@ -111,28 +99,23 @@ function afficherCompetitionsJoueur() {
     </div>
   `;
 
-  appelAPI(
-    "chargerCompetitions",
-    {},
-    function(data) {
+  appelAPI("chargerCompetitions", {}, function (data) {
+    if (!data.succes) {
+      contenu.innerHTML = `<p class="error">${data.message}</p>`;
+      return;
+    }
 
-      if (!data.succes) {
-        contenu.innerHTML = `<p class="error">${data.message}</p>`;
-        return;
-      }
-
-      let html = `
+    let html = `
         <div class="form-zone">
           <h2>Compétitions disponibles</h2>
       `;
 
-      if (data.competitions.length === 0) {
-        html += `<p>Aucune compétition disponible.</p>`;
-      }
+    if (data.competitions.length === 0) {
+      html += `<p>Aucune compétition disponible.</p>`;
+    }
 
-      data.competitions.forEach(function(competition) {
-
-        html += `
+    data.competitions.forEach(function (competition) {
+      html += `
           <div class="competition-card">
             <h3>${competition.nom}</h3>
             <p>Statut : ${competition.statut}</p>
@@ -142,25 +125,22 @@ function afficherCompetitionsJoueur() {
             </button>
           </div>
         `;
-      });
+    });
 
-      html += `
+    html += `
           <p class="small-link" onclick="deconnexion()">Déconnexion</p>
         </div>
       `;
 
-      contenu.innerHTML = html;
-    }
-  );
+    contenu.innerHTML = html;
+  });
 }
-
 
 /**
  * Pour le moment, on affiche juste la compétition choisie.
  * L'étape suivante chargera les dates.
  */
 function ouvrirCompetition(idCompetition, nomCompetition) {
-
   const contenu = document.getElementById("contenu");
   const pseudo = utilisateurConnecte.joueur.pseudo;
 
@@ -174,8 +154,7 @@ function ouvrirCompetition(idCompetition, nomCompetition) {
   appelAPI(
     "chargerDatesCompetition",
     { idCompetition: idCompetition },
-    function(resultatDates) {
-
+    function (resultatDates) {
       if (!resultatDates.succes) {
         contenu.innerHTML = `<p class="error">${resultatDates.message}</p>`;
         return;
@@ -185,10 +164,9 @@ function ouvrirCompetition(idCompetition, nomCompetition) {
         "chargerPresencesJoueur",
         {
           idCompetition: idCompetition,
-          pseudo: pseudo
+          pseudo: pseudo,
         },
-        function(resultatPresences) {
-
+        function (resultatPresences) {
           if (!resultatPresences.succes) {
             contenu.innerHTML = `<p class="error">${resultatPresences.message}</p>`;
             return;
@@ -198,16 +176,20 @@ function ouvrirCompetition(idCompetition, nomCompetition) {
             idCompetition,
             nomCompetition,
             resultatDates.dates,
-            resultatPresences.presences
+            resultatPresences.presences,
           );
-        }
+        },
       );
-    }
+    },
   );
 }
 
-function afficherFormulairePresences(idCompetition, nomCompetition, dates, presencesExistantes) {
-
+function afficherFormulairePresences(
+  idCompetition,
+  nomCompetition,
+  dates,
+  presencesExistantes,
+) {
   definirModeCarte("normal");
 
   const contenu = document.getElementById("contenu");
@@ -222,29 +204,34 @@ function afficherFormulairePresences(idCompetition, nomCompetition, dates, prese
     html += `<p>Aucune date définie pour cette compétition.</p>`;
   }
 
-  dates.forEach(function(date) {
-
+  dates.forEach(function (date) {
     const dateTexte = String(date.dateCompetition).trim();
     const dateAffichage = date.dateAffichage || dateTexte;
 
     const horaires = String(date.horaires || "")
       .split(",")
-      .map(function(h) { return h.trim(); })
-      .filter(function(h) { return h !== ""; });
+      .map(function (h) {
+        return h.trim();
+      })
+      .filter(function (h) {
+        return h !== "";
+      });
 
     let statutActuel = "Non renseigné";
     let horairesActuels = [];
 
-    presencesExistantes.forEach(function(presence) {
-
+    presencesExistantes.forEach(function (presence) {
       if (String(presence.dateCompetition).trim() === dateTexte) {
-
         statutActuel = presence.statut;
 
         horairesActuels = String(presence.horairesDisponibles || "")
           .split(",")
-          .map(function(h) { return h.trim(); })
-          .filter(function(h) { return h !== ""; });
+          .map(function (h) {
+            return h.trim();
+          })
+          .filter(function (h) {
+            return h !== "";
+          });
       }
     });
 
@@ -269,8 +256,7 @@ function afficherFormulairePresences(idCompetition, nomCompetition, dates, prese
       html += `<p>Aucun horaire défini pour cette date.</p>`;
     }
 
-    horaires.forEach(function(horaire) {
-
+    horaires.forEach(function (horaire) {
       const checked = horairesActuels.includes(horaire) ? "checked" : "";
 
       html += `
@@ -303,7 +289,6 @@ function afficherFormulairePresences(idCompetition, nomCompetition, dates, prese
 }
 
 function afficherRecapitulatif(idCompetition, nomCompetition) {
-
   const selects = document.querySelectorAll(".select-statut");
   const presences = [];
 
@@ -312,8 +297,7 @@ function afficherRecapitulatif(idCompetition, nomCompetition) {
   let nbRemplacant = 0;
   let nbNonRenseigne = 0;
 
-  selects.forEach(function(select) {
-
+  selects.forEach(function (select) {
     const dateCard = select.closest(".date-card");
 
     const dateCompetition = select.dataset.date;
@@ -322,10 +306,9 @@ function afficherRecapitulatif(idCompetition, nomCompetition) {
     let horairesDisponibles = [];
 
     if (statut === "Présent") {
-
       const casesHoraires = dateCard.querySelectorAll(".horaire-checkbox");
 
-      casesHoraires.forEach(function(caseHoraire) {
+      casesHoraires.forEach(function (caseHoraire) {
         if (caseHoraire.checked) {
           horairesDisponibles.push(caseHoraire.value);
         }
@@ -335,7 +318,7 @@ function afficherRecapitulatif(idCompetition, nomCompetition) {
     presences.push({
       dateCompetition: dateCompetition,
       statut: statut,
-      horairesDisponibles: horairesDisponibles.join(",")
+      horairesDisponibles: horairesDisponibles.join(","),
     });
 
     if (statut === "Présent") {
@@ -357,8 +340,7 @@ function afficherRecapitulatif(idCompetition, nomCompetition) {
       <div class="recap-box">
   `;
 
-  presences.forEach(function(presence) {
-
+  presences.forEach(function (presence) {
     let texteHoraires = "";
 
     if (presence.statut === "Présent") {
@@ -398,9 +380,7 @@ function afficherRecapitulatif(idCompetition, nomCompetition) {
   document.getElementById("contenu").innerHTML = html;
 }
 
-
 function confirmerPresences(idCompetition, presencesJSON) {
-
   const presences = JSON.parse(presencesJSON);
   const pseudo = utilisateurConnecte.joueur.pseudo;
 
@@ -416,10 +396,9 @@ function confirmerPresences(idCompetition, presencesJSON) {
     {
       idCompetition: idCompetition,
       pseudo: pseudo,
-      presences: JSON.stringify(presences)
+      presences: JSON.stringify(presences),
     },
-    function(data) {
-
+    function (data) {
       if (!data.succes) {
         document.getElementById("contenu").innerHTML = `
           <div class="form-zone">
@@ -441,10 +420,9 @@ function confirmerPresences(idCompetition, presencesJSON) {
           <button onclick="afficherCompetitionsJoueur()">Retour aux compétitions</button>
         </div>
       `;
-    }
+    },
   );
 }
-
 
 /**
  * Affiche le menu principal de l'espace officier.
@@ -453,7 +431,6 @@ function confirmerPresences(idCompetition, presencesJSON) {
  * sera vraiment développé.
  */
 function afficherEspaceOfficier() {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -465,17 +442,13 @@ function afficherEspaceOfficier() {
     </div>
   `;
 
-  appelAPI(
-    "chargerTableauDeBord",
-    {},
-    function(data) {
+  appelAPI("chargerTableauDeBord", {}, function (data) {
+    if (!data.succes) {
+      afficherMessageModal("Erreur", data.message);
+      return;
+    }
 
-      if (!data.succes) {
-        afficherMessageModal("Erreur", data.message);
-        return;
-      }
-
-      contenu.innerHTML = `
+    contenu.innerHTML = `
         <div class="form-zone">
           <h2>Tableau de bord officier</h2>
           <p>Connecté en tant que : ${utilisateurConnecte.joueur.pseudo}</p>
@@ -531,8 +504,7 @@ function afficherEspaceOfficier() {
           </button>
         </div>
       `;
-    }
-  );
+  });
 }
 
 /**
@@ -545,8 +517,7 @@ function afficherEspaceOfficier() {
  * - Archivée
  */
 function afficherSelectionCompetitionOfficier() {
-	
-	definirModeCarte("large");
+  definirModeCarte("large");
   const contenu = document.getElementById("contenu");
 
   contenu.innerHTML = `
@@ -556,29 +527,25 @@ function afficherSelectionCompetitionOfficier() {
     </div>
   `;
 
-  appelAPI(
-    "chargerCompetitions",
-    {},
-    function(data) {
-
-      if (!data.succes) {
-        contenu.innerHTML = `
+  appelAPI("chargerCompetitions", {}, function (data) {
+    if (!data.succes) {
+      contenu.innerHTML = `
           <div class="form-zone">
             <h2>Erreur</h2>
             <p class="error">${data.message}</p>
             <button onclick="afficherEspaceOfficier()">Retour</button>
           </div>
         `;
-        return;
-      }
+      return;
+    }
 
-      let html = `
+    let html = `
         <div class="form-zone">
           <h2>Choisir une compétition</h2>
       `;
 
-      data.competitions.forEach(function(competition) {
-        html += `
+    data.competitions.forEach(function (competition) {
+      html += `
           <div class="competition-card">
             <h3>${competition.nom}</h3>
             <p>Statut : ${competition.statut}</p>
@@ -589,22 +556,20 @@ function afficherSelectionCompetitionOfficier() {
             </button>
           </div>
         `;
-      });
+    });
 
-      html += `
+    html += `
           <button onclick="afficherEspaceOfficier()" class="secondary-button">
             Retour
           </button>
         </div>
       `;
 
-      contenu.innerHTML = html;
-    }
-  );
+    contenu.innerHTML = html;
+  });
 }
 
 function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -618,11 +583,8 @@ function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
 
   appelAPI(
     "genererTableauPresences",
-    {
-      idCompetition: idCompetition
-    },
-    function(data) {
-
+    { idCompetition: idCompetition },
+    function (data) {
       if (!data.succes) {
         contenu.innerHTML = `
           <div class="form-zone">
@@ -635,6 +597,10 @@ function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
 
       const stats = calculerStatistiquesTableau(data.lignes);
       const statsParDate = calculerStatistiquesParDate(data.dates, data.lignes);
+      const effectifParHoraire = calculerEffectifParHoraire(
+        data.dates,
+        data.lignes,
+      );
 
       let html = `
         <div class="form-zone">
@@ -647,8 +613,14 @@ function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
                   <th>Joueur</th>
       `;
 
-      data.dates.forEach(function(date) {
-        html += `<th>${date.dateAffichage}</th>`;
+      data.dates.forEach(function (date) {
+        html += `
+          <th class="date-header" title="${date.dateCompetition}">
+            <div class="date-jour">${date.jourCourt || ""}</div>
+            <div class="date-numero">${date.jourNumero || date.dateCompetition}</div>
+            <div class="date-mois">${date.moisCourt || ""}</div>
+          </th>
+        `;
       });
 
       html += `
@@ -658,30 +630,16 @@ function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
               <tbody>
       `;
 
-      data.lignes.forEach(function(ligne) {
-
+      data.lignes.forEach(function (ligne) {
         html += `
           <tr>
             <td>${ligne.pseudo}</td>
         `;
 
-        ligne.disponibilites.forEach(function(dispo) {
-
-          let icone = "⚪";
-
-          if (dispo.statut === "Présent") {
-            icone = "🟢";
-          } else if (dispo.statut === "Absent") {
-            icone = "🔴";
-          } else if (dispo.statut === "Présent mais en retard") {
-            icone = "🟠";
-          } else if (dispo.statut === "Remplaçant") {
-            icone = "🔵";
-          }
-
+        ligne.disponibilites.forEach(function (dispo) {
           html += `
-            <td title="${dispo.statut}">
-              ${icone}
+            <td onclick='afficherDetailPresence(${JSON.stringify(JSON.stringify(ligne.pseudo))}, ${JSON.stringify(JSON.stringify(dispo))})'>
+              ${formaterAffichagePresence(dispo)}
             </td>
           `;
         });
@@ -700,23 +658,20 @@ function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
           <div class="stats-box">
             <h3>Statistiques générales</h3>
             <p>🟢 Présents : ${stats.presents}</p>
-            <p>🔴 Absents : ${stats.absents}</p>
-            <p>🟠 Retards : ${stats.retards}</p>
             <p>🔵 Remplaçants : ${stats.remplacants}</p>
+            <p>🔴 Absents : ${stats.absents}</p>
             <p>⚪ Non renseignés : ${stats.nonRenseignes}</p>
             <p><strong>Taux de réponse : ${stats.tauxReponse}%</strong></p>
           </div>
 
           <div class="stats-box">
             <h3>Effectif par date</h3>
-
             <div class="table-container">
               <table class="presence-table">
                 <thead>
                   <tr>
                     <th>Date</th>
                     <th>🟢 Présents</th>
-                    <th>🟠 Retards</th>
                     <th>🔵 Remplaçants</th>
                     <th>🔴 Absents</th>
                     <th>⚪ Sans réponse</th>
@@ -725,12 +680,11 @@ function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
                 <tbody>
       `;
 
-      statsParDate.forEach(function(statDate) {
+      statsParDate.forEach(function (statDate) {
         html += `
           <tr>
             <td>${statDate.dateAffichage}</td>
             <td>${statDate.presents}</td>
-            <td>${statDate.retards}</td>
             <td>${statDate.remplacants}</td>
             <td>${statDate.absents}</td>
             <td>${statDate.nonRenseignes}</td>
@@ -744,12 +698,65 @@ function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
             </div>
           </div>
 
+          <div class="stats-box">
+            <h3>📊 Effectif par horaire</h3>
+      `;
+
+      effectifParHoraire.forEach(function (dateInfo) {
+        html += `
+          <div class="horaire-date-block">
+            <h4>${dateInfo.dateAffichage}</h4>
+            <div class="table-container">
+              <table class="presence-table horaire-table">
+                <thead>
+                  <tr>
+                    <th>Horaire</th>
+                    <th>🟢 Présents</th>
+                    <th>🔵 Remplaçants</th>
+                    <th>🔴 Absents</th>
+                    <th>⚪ Sans réponse</th>
+                  </tr>
+                </thead>
+                <tbody>
+        `;
+
+        if (dateInfo.horaires.length === 0) {
+          html += `
+            <tr>
+              <td colspan="5">Aucun horaire défini pour cette date.</td>
+            </tr>
+          `;
+        }
+
+        dateInfo.horaires.forEach(function (horaire) {
+          html += `
+            <tr>
+              <td>${horaire.horaire}</td>
+              <td>${horaire.presents}</td>
+              <td>${horaire.remplacants}</td>
+              <td>${horaire.absents}</td>
+              <td>${horaire.nonRenseignes}</td>
+            </tr>
+          `;
+        });
+
+        html += `
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      });
+
+      html += `
+          </div>
+
           <div class="table-actions">
-            <button onclick="exporterCSV(${idCompetition}, '${nomCompetition.replace(/'/g, "\\'")}')">
+            <button onclick="exporterCSV(${idCompetition}, '${nomCompetition.replace(/'/g, "\'")}')">
               📥 Exporter CSV
             </button>
 
-            <button onclick="chargerSansReponse(${idCompetition}, '${nomCompetition.replace(/'/g, "\\'")}')" class="secondary-button">
+            <button onclick="chargerSansReponse(${idCompetition}, '${nomCompetition.replace(/'/g, "\'")}')" class="secondary-button">
               Voir les sans réponse
             </button>
 
@@ -761,27 +768,25 @@ function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
       `;
 
       contenu.innerHTML = html;
-    }
+    },
   );
 }
 
 /**
- * Déconnexion simple.
+ * Déconnexion simple\.
  */
 function deconnexion() {
   utilisateurConnecte = null;
   afficherConnexion();
 }
 
-
 /**
  * Appelle l'API Apps Script avec JSONP.
  */
 function appelAPI(action, parametres, callback) {
-
   const nomCallback = "callback_" + Date.now();
 
-  window[nomCallback] = function(reponse) {
+  window[nomCallback] = function (reponse) {
     callback(reponse);
     delete window[nomCallback];
     script.remove();
@@ -790,7 +795,8 @@ function appelAPI(action, parametres, callback) {
   let url = API_URL + "?action=" + encodeURIComponent(action);
 
   for (const cle in parametres) {
-    url += "&" + encodeURIComponent(cle) + "=" + encodeURIComponent(parametres[cle]);
+    url +=
+      "&" + encodeURIComponent(cle) + "=" + encodeURIComponent(parametres[cle]);
   }
 
   url += "&callback=" + nomCallback;
@@ -798,7 +804,7 @@ function appelAPI(action, parametres, callback) {
   const script = document.createElement("script");
   script.src = url;
 
-  script.onerror = function() {
+  script.onerror = function () {
     alert("Erreur de connexion à l'API.");
   };
 
@@ -806,7 +812,6 @@ function appelAPI(action, parametres, callback) {
 }
 
 function definirModeCarte(mode) {
-
   const app = document.getElementById("app");
 
   if (!app) {
@@ -822,7 +827,6 @@ function definirModeCarte(mode) {
 }
 
 function chargerSansReponse(idCompetition, nomCompetition) {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -837,8 +841,7 @@ function chargerSansReponse(idCompetition, nomCompetition) {
   appelAPI(
     "chargerJoueursSansReponse",
     { idCompetition: idCompetition },
-    function(data) {
-
+    function (data) {
       if (!data.succes) {
         contenu.innerHTML = `
           <div class="form-zone">
@@ -875,7 +878,7 @@ function chargerSansReponse(idCompetition, nomCompetition) {
         `;
       }
 
-      data.joueurs.forEach(function(joueur) {
+      data.joueurs.forEach(function (joueur) {
         html += `
           <tr>
             <td>${joueur.pseudo}</td>
@@ -896,17 +899,15 @@ function chargerSansReponse(idCompetition, nomCompetition) {
       `;
 
       contenu.innerHTML = html;
-    }
+    },
   );
 }
 
 function exporterCSV(idCompetition, nomCompetition) {
-
   appelAPI(
     "genererExportCSV",
     { idCompetition: idCompetition },
-    function(data) {
-
+    function (data) {
       if (!data.succes) {
         alert(data.message);
         return;
@@ -915,16 +916,16 @@ function exporterCSV(idCompetition, nomCompetition) {
       const contenuCSV = "\uFEFF" + data.csv;
 
       const blob = new Blob([contenuCSV], {
-        type: "text/csv;charset=utf-8;"
+        type: "text/csv;charset=utf-8;",
       });
 
       const lien = document.createElement("a");
       const url = URL.createObjectURL(blob);
 
-      const nomFichier = "presences_" + nomCompetition
-        .replaceAll(" ", "_")
-        .replaceAll("/", "-")
-        + ".csv";
+      const nomFichier =
+        "presences_" +
+        nomCompetition.replaceAll(" ", "_").replaceAll("/", "-") +
+        ".csv";
 
       lien.href = url;
       lien.download = nomFichier;
@@ -934,75 +935,60 @@ function exporterCSV(idCompetition, nomCompetition) {
 
       document.body.removeChild(lien);
       URL.revokeObjectURL(url);
-    }
+    },
   );
 }
 
 function calculerStatistiquesTableau(lignes) {
-
   let presents = 0;
   let absents = 0;
-  let retards = 0;
   let remplacants = 0;
   let nonRenseignes = 0;
   let totalCases = 0;
 
-  lignes.forEach(function(ligne) {
-
-    ligne.disponibilites.forEach(function(dispo) {
-
+  lignes.forEach(function (ligne) {
+    ligne.disponibilites.forEach(function (dispo) {
       totalCases++;
 
       if (dispo.statut === "Présent") {
         presents++;
       } else if (dispo.statut === "Absent") {
         absents++;
-      } else if (dispo.statut === "Présent mais en retard") {
-        retards++;
       } else if (dispo.statut === "Remplaçant") {
         remplacants++;
       } else {
         nonRenseignes++;
       }
-
     });
-
   });
 
   const casesRenseignees = totalCases - nonRenseignes;
-
-  const tauxReponse = totalCases === 0
-    ? 0
-    : Math.round((casesRenseignees / totalCases) * 100);
+  const tauxReponse =
+    totalCases === 0 ? 0 : Math.round((casesRenseignees / totalCases) * 100);
 
   return {
     presents: presents,
     absents: absents,
-    retards: retards,
     remplacants: remplacants,
     nonRenseignes: nonRenseignes,
-    tauxReponse: tauxReponse
+    tauxReponse: tauxReponse,
   };
 }
 
 function calculerStatistiquesParDate(dates, lignes) {
-
   const statsParDate = [];
 
-  dates.forEach(function(dateInfo) {
-
+  dates.forEach(function (dateInfo) {
     const dateCompetition = dateInfo.dateCompetition;
     const dateAffichage = dateInfo.dateAffichage;
 
     let presents = 0;
     let absents = 0;
-    let retards = 0;
     let remplacants = 0;
     let nonRenseignes = 0;
 
-    lignes.forEach(function(ligne) {
-
-      const dispo = ligne.disponibilites.find(function(item) {
+    lignes.forEach(function (ligne) {
+      const dispo = ligne.disponibilites.find(function (item) {
         return item.dateCompetition === dateCompetition;
       });
 
@@ -1012,32 +998,26 @@ function calculerStatistiquesParDate(dates, lignes) {
         presents++;
       } else if (statut === "Absent") {
         absents++;
-      } else if (statut === "Présent mais en retard") {
-        retards++;
       } else if (statut === "Remplaçant") {
         remplacants++;
       } else {
         nonRenseignes++;
       }
-
     });
 
     statsParDate.push({
       dateAffichage: dateAffichage,
       presents: presents,
       absents: absents,
-      retards: retards,
       remplacants: remplacants,
-      nonRenseignes: nonRenseignes
+      nonRenseignes: nonRenseignes,
     });
-
   });
 
   return statsParDate;
 }
 
 function afficherGestionCompetitions() {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -1049,23 +1029,19 @@ function afficherGestionCompetitions() {
     </div>
   `;
 
-  appelAPI(
-    "chargerCompetitions",
-    {},
-    function(data) {
-
-      if (!data.succes) {
-        contenu.innerHTML = `
+  appelAPI("chargerCompetitions", {}, function (data) {
+    if (!data.succes) {
+      contenu.innerHTML = `
           <div class="form-zone">
             <h2>Erreur</h2>
             <p class="error">${data.message}</p>
             <button onclick="afficherEspaceOfficier()">Retour</button>
           </div>
         `;
-        return;
-      }
+      return;
+    }
 
-      let html = `
+    let html = `
         <div class="form-zone">
           <h2>Gestion des compétitions</h2>
 
@@ -1074,8 +1050,8 @@ function afficherGestionCompetitions() {
           </button>
       `;
 
-      data.competitions.forEach(function(competition) {
-        html += `
+    data.competitions.forEach(function (competition) {
+      html += `
           <div class="competition-card">
             <h3>${competition.nom}</h3>
             <p>Statut : ${competition.statut}</p>
@@ -1099,36 +1075,34 @@ function afficherGestionCompetitions() {
             </button>
           </div>
         `;
-      });
+    });
 
-      html += `
+    html += `
           <button onclick="afficherEspaceOfficier()" class="secondary-button">
             Retour
           </button>
         </div>
       `;
 
-      contenu.innerHTML = html;
-    }
-  );
+    contenu.innerHTML = html;
+  });
 }
 
 function changerStatutCompetition(idCompetition, nouveauStatut) {
-
   afficherConfirmation(
     "Modifier le statut ?",
-    "Confirmer le passage de cette compétition en statut : " + nouveauStatut + " ?",
-    function() {
-
+    "Confirmer le passage de cette compétition en statut : " +
+      nouveauStatut +
+      " ?",
+    function () {
       appelAPI(
         "modifierStatutCompetition",
         {
           idCompetition: idCompetition,
           nouveauStatut: nouveauStatut,
-          utilisateur: utilisateurConnecte.joueur.pseudo
+          utilisateur: utilisateurConnecte.joueur.pseudo,
         },
-        function(data) {
-
+        function (data) {
           if (!data.succes) {
             afficherMessageModal("Erreur", data.message);
             return;
@@ -1137,18 +1111,17 @@ function changerStatutCompetition(idCompetition, nouveauStatut) {
           afficherMessageModal(
             "Statut modifié",
             "La compétition est maintenant en statut : " + nouveauStatut,
-            function() {
+            function () {
               afficherGestionCompetitions();
-            }
+            },
           );
-        }
+        },
       );
-    }
+    },
   );
 }
 
 function afficherConfirmation(titre, message, actionConfirmer) {
-
   fermerModal();
 
   const modal = document.createElement("div");
@@ -1167,15 +1140,13 @@ function afficherConfirmation(titre, message, actionConfirmer) {
 
   document.body.appendChild(modal);
 
-  document.getElementById("modal-confirm-button").onclick = function() {
+  document.getElementById("modal-confirm-button").onclick = function () {
     fermerModal();
     actionConfirmer();
   };
 }
 
-
 function afficherMessageModal(titre, message, actionFermer) {
-
   fermerModal();
 
   const modal = document.createElement("div");
@@ -1183,7 +1154,7 @@ function afficherMessageModal(titre, message, actionFermer) {
   modal.innerHTML = `
     <div class="modal-box">
       <h2>${titre}</h2>
-      <p>${message}</p>
+      <div class="modal-message">${message}</div>
 
       <div class="modal-actions">
         <button id="modal-close-button">OK</button>
@@ -1193,7 +1164,7 @@ function afficherMessageModal(titre, message, actionFermer) {
 
   document.body.appendChild(modal);
 
-  document.getElementById("modal-close-button").onclick = function() {
+  document.getElementById("modal-close-button").onclick = function () {
     fermerModal();
 
     if (actionFermer) {
@@ -1202,9 +1173,7 @@ function afficherMessageModal(titre, message, actionFermer) {
   };
 }
 
-
 function fermerModal() {
-
   const ancienneModal = document.getElementById("modal-overlay");
 
   if (ancienneModal) {
@@ -1213,7 +1182,6 @@ function fermerModal() {
 }
 
 function afficherFormulaireCreationCompetition() {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -1307,7 +1275,6 @@ function afficherFormulaireCreationCompetition() {
 }
 
 function confirmerCreationCompetitionComplete(configJSON) {
-
   const config = JSON.parse(configJSON);
 
   appelAPI(
@@ -1317,10 +1284,9 @@ function confirmerCreationCompetitionComplete(configJSON) {
       statut: config.statut,
       creePar: utilisateurConnecte.joueur.pseudo,
       rolesAutorises: config.rolesAutorises,
-      description: config.description
+      description: config.description,
     },
-    function(dataCompetition) {
-
+    function (dataCompetition) {
       if (!dataCompetition.succes) {
         afficherMessageModal("Erreur", dataCompetition.message);
         return;
@@ -1332,10 +1298,9 @@ function confirmerCreationCompetitionComplete(configJSON) {
           idCompetition: dataCompetition.idCompetition,
           dates: JSON.stringify(config.dates),
           horaires: config.horaires,
-          utilisateur: utilisateurConnecte.joueur.pseudo
+          utilisateur: utilisateurConnecte.joueur.pseudo,
         },
-        function(dataDates) {
-
+        function (dataDates) {
           if (!dataDates.succes) {
             afficherMessageModal("Erreur", dataDates.message);
             return;
@@ -1344,18 +1309,17 @@ function confirmerCreationCompetitionComplete(configJSON) {
           afficherMessageModal(
             "Compétition créée",
             "La compétition et ses dates ont bien été créées.",
-            function() {
+            function () {
               afficherGestionCompetitions();
-            }
+            },
           );
-        }
+        },
       );
-    }
+    },
   );
 }
 
 function afficherGestionDatesCompetition(idCompetition, nomCompetition) {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -1370,8 +1334,7 @@ function afficherGestionDatesCompetition(idCompetition, nomCompetition) {
   appelAPI(
     "chargerDatesCompetition",
     { idCompetition: idCompetition },
-    function(data) {
-
+    function (data) {
       if (!data.succes) {
         afficherMessageModal("Erreur", data.message);
         return;
@@ -1390,7 +1353,7 @@ function afficherGestionDatesCompetition(idCompetition, nomCompetition) {
         html += `<p>Aucune date définie.</p>`;
       }
 
-      data.dates.forEach(function(date) {
+      data.dates.forEach(function (date) {
         html += `
   <div class="date-admin-row">
     <span>📅 ${date.dateAffichage} — ${date.dateCompetition}</span>
@@ -1416,25 +1379,19 @@ function afficherGestionDatesCompetition(idCompetition, nomCompetition) {
       `;
 
       contenu.innerHTML = html;
-    }
+    },
   );
 }
 
 function afficherVersionSite() {
-
-  const elementVersion =
-    document.getElementById("version-site");
+  const elementVersion = document.getElementById("version-site");
 
   if (elementVersion) {
-
-    elementVersion.textContent =
-      "Version " + VERSION_SITE;
-
+    elementVersion.textContent = "Version " + VERSION_SITE;
   }
 }
 
 function afficherFormulaireAjoutDate(idCompetition, nomCompetition) {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -1459,7 +1416,6 @@ function afficherFormulaireAjoutDate(idCompetition, nomCompetition) {
 }
 
 function ajouterDateDepuisSite(idCompetition, nomCompetition) {
-
   const dateChoisie = document.getElementById("nouvelleDateCompetition").value;
 
   if (dateChoisie === "") {
@@ -1472,10 +1428,9 @@ function ajouterDateDepuisSite(idCompetition, nomCompetition) {
     {
       idCompetition: idCompetition,
       dateCompetition: dateChoisie,
-      utilisateur: utilisateurConnecte.joueur.pseudo
+      utilisateur: utilisateurConnecte.joueur.pseudo,
     },
-    function(data) {
-
+    function (data) {
       if (!data.succes) {
         afficherMessageModal("Erreur", data.message);
         return;
@@ -1484,36 +1439,32 @@ function ajouterDateDepuisSite(idCompetition, nomCompetition) {
       afficherMessageModal(
         "Date ajoutée",
         "La date a bien été ajoutée à la compétition.",
-        function() {
+        function () {
           afficherGestionDatesCompetition(idCompetition, nomCompetition);
-        }
+        },
       );
-    }
+    },
   );
 }
 
 function confirmerSuppressionDate(idDate, idCompetition, nomCompetition) {
-
   afficherConfirmation(
     "Supprimer la date ?",
     "Cette action supprimera la date de la compétition. Confirmer ?",
-    function() {
+    function () {
       supprimerDateDepuisSite(idDate, idCompetition, nomCompetition);
-    }
+    },
   );
 }
 
-
 function supprimerDateDepuisSite(idDate, idCompetition, nomCompetition) {
-
   appelAPI(
     "supprimerDateCompetition",
     {
       idDate: idDate,
-      utilisateur: utilisateurConnecte.joueur.pseudo
+      utilisateur: utilisateurConnecte.joueur.pseudo,
     },
-    function(data) {
-
+    function (data) {
       if (!data.succes) {
         afficherMessageModal("Erreur", data.message);
         return;
@@ -1522,16 +1473,15 @@ function supprimerDateDepuisSite(idDate, idCompetition, nomCompetition) {
       afficherMessageModal(
         "Date supprimée",
         "La date a bien été supprimée.",
-        function() {
+        function () {
           afficherGestionDatesCompetition(idCompetition, nomCompetition);
-        }
+        },
       );
-    }
+    },
   );
 }
 
 function afficherGestionJoueurs() {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -1543,17 +1493,13 @@ function afficherGestionJoueurs() {
     </div>
   `;
 
-  appelAPI(
-    "chargerJoueurs",
-    {},
-    function(data) {
+  appelAPI("chargerJoueurs", {}, function (data) {
+    if (!data.succes) {
+      afficherMessageModal("Erreur", data.message);
+      return;
+    }
 
-      if (!data.succes) {
-        afficherMessageModal("Erreur", data.message);
-        return;
-      }
-
-      let html = `
+    let html = `
         <div class="form-zone">
           <h2>Gestion des joueurs</h2>
 
@@ -1575,8 +1521,8 @@ function afficherGestionJoueurs() {
               <tbody>
       `;
 
-      data.joueurs.forEach(function(joueur) {
-        html += `
+    data.joueurs.forEach(function (joueur) {
+      html += `
           <tr>
             <td>${joueur.pseudo}</td>
             <td>${joueur.roles}</td>
@@ -1589,9 +1535,9 @@ function afficherGestionJoueurs() {
 </td>
           </tr>
         `;
-      });
+    });
 
-      html += `
+    html += `
               </tbody>
             </table>
           </div>
@@ -1602,13 +1548,11 @@ function afficherGestionJoueurs() {
         </div>
       `;
 
-      contenu.innerHTML = html;
-    }
-  );
+    contenu.innerHTML = html;
+  });
 }
 
 function afficherFormulaireAjoutJoueur() {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -1668,7 +1612,6 @@ function afficherFormulaireAjoutJoueur() {
 }
 
 function ajouterJoueurDepuisSite() {
-
   const pseudo = document.getElementById("nouveauPseudoJoueur").value.trim();
   const statut = document.getElementById("nouveauStatutJoueur").value;
 
@@ -1710,10 +1653,9 @@ function ajouterJoueurDepuisSite() {
       pseudo: pseudo,
       roles: roles.join(","),
       statut: statut,
-      utilisateur: utilisateurConnecte.joueur.pseudo
+      utilisateur: utilisateurConnecte.joueur.pseudo,
     },
-    function(data) {
-
+    function (data) {
       if (!data.succes) {
         afficherMessageModal("Erreur", data.message);
         return;
@@ -1722,16 +1664,15 @@ function ajouterJoueurDepuisSite() {
       afficherMessageModal(
         "Joueur ajouté",
         "Le joueur a bien été ajouté.",
-        function() {
+        function () {
           afficherGestionJoueurs();
-        }
+        },
       );
-    }
+    },
   );
 }
 
 function afficherFormulaireModificationJoueur(joueur) {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -1793,7 +1734,6 @@ function afficherFormulaireModificationJoueur(joueur) {
 }
 
 function modifierJoueurDepuisSite(idJoueur) {
-
   const pseudo = document.getElementById("modifierPseudoJoueur").value.trim();
   const statut = document.getElementById("modifierStatutJoueur").value;
 
@@ -1836,10 +1776,9 @@ function modifierJoueurDepuisSite(idJoueur) {
       pseudo: pseudo,
       roles: roles.join(","),
       statut: statut,
-      utilisateur: utilisateurConnecte.joueur.pseudo
+      utilisateur: utilisateurConnecte.joueur.pseudo,
     },
-    function(data) {
-
+    function (data) {
       if (!data.succes) {
         afficherMessageModal("Erreur", data.message);
         return;
@@ -1848,16 +1787,15 @@ function modifierJoueurDepuisSite(idJoueur) {
       afficherMessageModal(
         "Joueur modifié",
         "Les informations du joueur ont bien été mises à jour.",
-        function() {
+        function () {
           afficherGestionJoueurs();
-        }
+        },
       );
-    }
+    },
   );
 }
 
 function afficherJournalActivite() {
-
   definirModeCarte("large");
 
   const contenu = document.getElementById("contenu");
@@ -1869,17 +1807,13 @@ function afficherJournalActivite() {
     </div>
   `;
 
-  appelAPI(
-    "chargerJournalActivite",
-    {},
-    function(data) {
+  appelAPI("chargerJournalActivite", {}, function (data) {
+    if (!data.succes) {
+      afficherMessageModal("Erreur", data.message);
+      return;
+    }
 
-      if (!data.succes) {
-        afficherMessageModal("Erreur", data.message);
-        return;
-      }
-
-      let html = `
+    let html = `
         <div class="form-zone">
           <h2>Journal d'activité</h2>
           <p>50 dernières actions enregistrées.</p>
@@ -1897,16 +1831,16 @@ function afficherJournalActivite() {
               <tbody>
       `;
 
-      if (data.journal.length === 0) {
-        html += `
+    if (data.journal.length === 0) {
+      html += `
           <tr>
             <td colspan="4">Aucune action enregistrée.</td>
           </tr>
         `;
-      }
+    }
 
-      data.journal.forEach(function(entree) {
-        html += `
+    data.journal.forEach(function (entree) {
+      html += `
           <tr>
             <td>${entree.dateHeure}</td>
             <td>${entree.utilisateur}</td>
@@ -1914,9 +1848,9 @@ function afficherJournalActivite() {
             <td>${entree.details}</td>
           </tr>
         `;
-      });
+    });
 
-      html += `
+    html += `
               </tbody>
             </table>
           </div>
@@ -1927,13 +1861,11 @@ function afficherJournalActivite() {
         </div>
       `;
 
-      contenu.innerHTML = html;
-    }
-  );
+    contenu.innerHTML = html;
+  });
 }
 
 function gererAffichageHoraires(selectElement) {
-
   const dateCard = selectElement.closest(".date-card");
   const horairesZone = dateCard.querySelector(".horaires-zone");
 
@@ -1948,16 +1880,17 @@ function gererAffichageHoraires(selectElement) {
 
     const cases = horairesZone.querySelectorAll(".horaire-checkbox");
 
-    cases.forEach(function(caseHoraire) {
+    cases.forEach(function (caseHoraire) {
       caseHoraire.checked = false;
     });
   }
 }
 
 function previsualiserCreationCompetition() {
-
   const nom = document.getElementById("nomCompetition").value.trim();
-  const description = document.getElementById("descriptionCompetition").value.trim();
+  const description = document
+    .getElementById("descriptionCompetition")
+    .value.trim();
   const statut = document.getElementById("statutCompetition").value;
 
   const dateDebut = document.getElementById("dateDebutCompetition").value;
@@ -1973,22 +1906,34 @@ function previsualiserCreationCompetition() {
   }
 
   if (roles.length === 0) {
-    afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle autorisé.");
+    afficherMessageModal(
+      "Erreur",
+      "Merci de sélectionner au moins un rôle autorisé.",
+    );
     return;
   }
 
   if (dateDebut === "" || dateFin === "") {
-    afficherMessageModal("Erreur", "Merci de sélectionner une date de début et une date de fin.");
+    afficherMessageModal(
+      "Erreur",
+      "Merci de sélectionner une date de début et une date de fin.",
+    );
     return;
   }
 
   if (new Date(dateFin) < new Date(dateDebut)) {
-    afficherMessageModal("Erreur", "La date de fin doit être après la date de début.");
+    afficherMessageModal(
+      "Erreur",
+      "La date de fin doit être après la date de début.",
+    );
     return;
   }
 
   if (joursSelectionnes.length === 0) {
-    afficherMessageModal("Erreur", "Merci de sélectionner au moins un jour concerné.");
+    afficherMessageModal(
+      "Erreur",
+      "Merci de sélectionner au moins un jour concerné.",
+    );
     return;
   }
 
@@ -1997,7 +1942,11 @@ function previsualiserCreationCompetition() {
     return;
   }
 
-  const datesGenerees = genererDatesDepuisPeriode(dateDebut, dateFin, joursSelectionnes);
+  const datesGenerees = genererDatesDepuisPeriode(
+    dateDebut,
+    dateFin,
+    joursSelectionnes,
+  );
 
   if (datesGenerees.length === 0) {
     afficherMessageModal("Erreur", "Aucune date générée avec ces paramètres.");
@@ -2010,13 +1959,11 @@ function previsualiserCreationCompetition() {
     statut: statut,
     rolesAutorises: roles.join(","),
     dates: datesGenerees,
-    horaires: horaires
+    horaires: horaires,
   });
 }
 
-
 function recupererRolesCreationCompetition() {
-
   const roles = [];
 
   if (document.getElementById("roleOfficier").checked) {
@@ -2042,13 +1989,11 @@ function recupererRolesCreationCompetition() {
   return roles;
 }
 
-
 function recupererJoursSelectionnes() {
-
   const cases = document.querySelectorAll(".jour-checkbox");
   const jours = [];
 
-  cases.forEach(function(caseJour) {
+  cases.forEach(function (caseJour) {
     if (caseJour.checked) {
       jours.push(Number(caseJour.value));
     }
@@ -2057,20 +2002,33 @@ function recupererJoursSelectionnes() {
   return jours;
 }
 
-
 function genererDatesDepuisPeriode(dateDebut, dateFin, joursSelectionnes) {
-
   const dates = [];
 
-  const dateCourante = new Date(dateDebut + "T00:00:00");
-  const dateLimite = new Date(dateFin + "T00:00:00");
+  const debutParts = dateDebut.split("-");
+  const finParts = dateFin.split("-");
+
+  const dateCourante = new Date(
+    Number(debutParts[0]),
+    Number(debutParts[1]) - 1,
+    Number(debutParts[2]),
+  );
+
+  const dateLimite = new Date(
+    Number(finParts[0]),
+    Number(finParts[1]) - 1,
+    Number(finParts[2]),
+  );
 
   while (dateCourante <= dateLimite) {
-
     const jourSemaine = dateCourante.getDay();
 
     if (joursSelectionnes.includes(jourSemaine)) {
-      dates.push(dateCourante.toISOString().split("T")[0]);
+      const annee = dateCourante.getFullYear();
+      const mois = String(dateCourante.getMonth() + 1).padStart(2, "0");
+      const jour = String(dateCourante.getDate()).padStart(2, "0");
+
+      dates.push(annee + "-" + mois + "-" + jour);
     }
 
     dateCourante.setDate(dateCourante.getDate() + 1);
@@ -2079,14 +2037,12 @@ function genererDatesDepuisPeriode(dateDebut, dateFin, joursSelectionnes) {
   return dates;
 }
 
-
 function afficherRecapCreationCompetition(config) {
-
   definirModeCarte("large");
 
   let htmlDates = "";
 
-  config.dates.forEach(function(date) {
+  config.dates.forEach(function (date) {
     htmlDates += `<p>📅 ${date}</p>`;
   });
 
@@ -2117,4 +2073,143 @@ function afficherRecapCreationCompetition(config) {
       </button>
     </div>
   `;
+}
+
+function formaterAffichagePresence(dispo) {
+  if (dispo.statut === "Présent") {
+    const horaires = String(dispo.horairesDisponibles || "")
+      .split(",")
+      .map(function (h) {
+        return h.trim();
+      })
+      .filter(function (h) {
+        return h !== "";
+      });
+
+    if (horaires.length > 0) {
+      return "🟢(" + horaires.length + ")";
+    }
+
+    return "🟢";
+  }
+
+  if (dispo.statut === "Absent") {
+    return "🔴";
+  }
+
+  if (dispo.statut === "Remplaçant") {
+    return "🔵";
+  }
+
+  return "⚪";
+}
+
+function afficherDetailPresence(pseudoJSON, dispoJSON) {
+  const pseudo = JSON.parse(pseudoJSON);
+  const dispo = JSON.parse(dispoJSON);
+
+  let horairesHTML = "";
+
+  const horairesSelectionnes = String(dispo.horairesDisponibles || "")
+    .split(",")
+    .map(function (h) {
+      return h.trim();
+    })
+    .filter(function (h) {
+      return h !== "";
+    });
+
+  if (dispo.statut === "Présent" && horairesSelectionnes.length > 0) {
+    horairesSelectionnes.forEach(function (horaire) {
+      horairesHTML += `<span class="horaire-badge">✅ ${horaire}</span>`;
+    });
+  } else {
+    horairesHTML = `<p>Aucun horaire disponible.</p>`;
+  }
+
+  afficherMessageModal(
+    pseudo + " — " + dispo.dateAffichage,
+    `
+      <p>Statut : <strong>${dispo.statut}</strong></p>
+      <div class="horaires-modal">
+        ${horairesHTML}
+      </div>
+    `,
+  );
+}
+
+function calculerEffectifParHoraire(dates, lignes) {
+  const resultats = [];
+
+  dates.forEach(function (dateInfo) {
+    const horairesDate = String(dateInfo.horaires || "")
+      .split(",")
+      .map(function (h) {
+        return h.trim();
+      })
+      .filter(function (h) {
+        return h !== "";
+      });
+
+    const statsHoraires = [];
+
+    horairesDate.forEach(function (horaire) {
+      let presents = 0;
+      let remplacants = 0;
+      let absents = 0;
+      let nonRenseignes = 0;
+
+      lignes.forEach(function (ligne) {
+        const dispo = ligne.disponibilites.find(function (item) {
+          return item.dateCompetition === dateInfo.dateCompetition;
+        });
+
+        if (!dispo || dispo.statut === "Non renseigné") {
+          nonRenseignes++;
+          return;
+        }
+
+        if (dispo.statut === "Absent") {
+          absents++;
+          return;
+        }
+
+        if (dispo.statut === "Remplaçant") {
+          remplacants++;
+          return;
+        }
+
+        if (dispo.statut === "Présent") {
+          const horairesDispo = String(dispo.horairesDisponibles || "")
+            .split(",")
+            .map(function (h) {
+              return h.trim();
+            })
+            .filter(function (h) {
+              return h !== "";
+            });
+
+          if (horairesDispo.includes(horaire)) {
+            presents++;
+          }
+        }
+      });
+
+      statsHoraires.push({
+        horaire: horaire,
+        presents: presents,
+        remplacants: remplacants,
+        absents: absents,
+        nonRenseignes: nonRenseignes,
+      });
+    });
+
+    resultats.push({
+      dateAffichage: dateInfo.dateAffichage,
+      dateCompetition: dateInfo.dateCompetition,
+      horaires: statsHoraires,
+    });
+  });
+
+  return resultats;
 }
