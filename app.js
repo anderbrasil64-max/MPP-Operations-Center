@@ -1,4 +1,4 @@
-const VERSION_SITE = "Alpha 0.1.0";
+const VERSION_SITE = "Alpha 0.1.1";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2WoCZmifII1DiJqeLpBZ0S0SRj8RC2PFq-aw-V9EjLU_jeA/exec";
 
