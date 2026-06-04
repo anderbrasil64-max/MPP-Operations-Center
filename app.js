@@ -1113,8 +1113,34 @@ function afficherFormulaireCreationCompetition() {
       <label for="descriptionCompetition">Description</label>
       <input type="text" id="descriptionCompetition" placeholder="Ex : Campagne principale du clan MPP">
 
-      <label for="rolesAutorisesCompetition">Rôles autorisés</label>
-      <input type="text" id="rolesAutorisesCompetition" value="Officier,Strateur,Soldat">
+     <label>Rôles autorisés</label>
+
+<div class="roles-selection">
+  <label class="checkbox-role">
+    <input type="checkbox" id="roleOfficier" checked>
+    Officier
+  </label>
+
+  <label class="checkbox-role">
+    <input type="checkbox" id="roleStrateur" checked>
+    Strateur
+  </label>
+
+  <label class="checkbox-role">
+    <input type="checkbox" id="roleSoldat" checked>
+    Soldat
+  </label>
+
+  <label class="checkbox-role">
+    <input type="checkbox" id="roleReserviste">
+    Réserviste
+  </label>
+
+  <label class="checkbox-role">
+    <input type="checkbox" id="roleRecrue">
+    Recrue
+  </label>
+</div>
 
       <label for="statutCompetition">Statut initial</label>
       <select id="statutCompetition">
@@ -1139,7 +1165,34 @@ function creerCompetitionDepuisSite() {
 
   const nom = document.getElementById("nomCompetition").value.trim();
   const description = document.getElementById("descriptionCompetition").value.trim();
-  const rolesAutorises = document.getElementById("rolesAutorisesCompetition").value.trim();
+  const roles = [];
+
+if (document.getElementById("roleOfficier").checked) {
+  roles.push("Officier");
+}
+
+if (document.getElementById("roleStrateur").checked) {
+  roles.push("Strateur");
+}
+
+if (document.getElementById("roleSoldat").checked) {
+  roles.push("Soldat");
+}
+
+if (document.getElementById("roleReserviste").checked) {
+  roles.push("Réserviste");
+}
+
+if (document.getElementById("roleRecrue").checked) {
+  roles.push("Recrue");
+}
+
+const rolesAutorises = roles.join(",");
+
+if (rolesAutorises === "") {
+  afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle autorisé.");
+  return;
+}
   const statut = document.getElementById("statutCompetition").value;
 
   if (nom === "") {
@@ -1170,6 +1223,64 @@ function creerCompetitionDepuisSite() {
           afficherGestionCompetitions();
         }
       );
+    }
+  );
+}
+
+function afficherGestionDatesCompetition(idCompetition, nomCompetition) {
+
+  definirModeCarte("large");
+
+  const contenu = document.getElementById("contenu");
+
+  contenu.innerHTML = `
+    <div class="form-zone">
+      <h2>Gestion des dates</h2>
+      <p>Chargement...</p>
+    </div>
+  `;
+
+  appelAPI(
+    "chargerDatesCompetition",
+    { idCompetition: idCompetition },
+    function(data) {
+
+      if (!data.succes) {
+        afficherMessageModal("Erreur", data.message);
+        return;
+      }
+
+      let html = `
+        <div class="form-zone">
+          <h2>Gestion des dates</h2>
+          <p>Compétition : ${nomCompetition}</p>
+
+          <div class="stats-box">
+            <h3>Dates existantes</h3>
+      `;
+
+      if (data.dates.length === 0) {
+        html += `<p>Aucune date définie.</p>`;
+      }
+
+      data.dates.forEach(function(date) {
+        html += `<p>📅 ${date.dateAffichage} — ${date.dateCompetition}</p>`;
+      });
+
+      html += `
+          </div>
+
+          <button onclick="afficherFormulaireAjoutDate(${idCompetition}, '${nomCompetition.replace(/'/g, "\\'")}')">
+            ➕ Ajouter une date
+          </button>
+
+          <button onclick="afficherGestionCompetitions()" class="secondary-button">
+            Retour
+          </button>
+        </div>
+      `;
+
+      contenu.innerHTML = html;
     }
   );
 }
