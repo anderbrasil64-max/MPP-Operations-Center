@@ -1,13 +1,12 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.3.0
+   Version Alpha 0.4.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.3.5";
-const API_URL = "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2WoCZmifII1DiJqeLpBZ0S0SRj8RC2PFq-aw-V9EjLU_jeA/exec";
-
+const VERSION_SITE = "Alpha 0.4.0 - Supabase";
 let utilisateurConnecte = null;
+let accesOfficierValide = false;
 let cacheFrontend = {
   competitions: null,
   competitionComplete: {},
@@ -94,27 +93,38 @@ function afficherConnexion() {
 function connexion() {
   const pseudo = document.getElementById("pseudo").value.trim();
   const message = document.getElementById("message");
+
   if (pseudo === "") {
     message.textContent = "Merci de saisir un pseudo.";
     message.style.color = "#ff5555";
     return;
   }
+
   message.textContent = "Connexion en cours...";
   message.style.color = "#CFCFCF";
-  appelAPI("identifierUtilisateur", { pseudo }, function (data) {
+
+  identifierUtilisateurSupabase(pseudo).then(function (data) {
     if (!data.succes) {
       message.textContent = data.message;
       message.style.color = "#ff5555";
       return;
     }
+
     utilisateurConnecte = data;
-    if (data.type === "officier") afficherChoixOfficier();
-    else afficherCompetitionsJoueur();
+    accesOfficierValide = false;
+
+    if (data.type === "officier") {
+      afficherDemandeMotDePasseOfficier();
+    } else {
+      afficherCompetitionsJoueur();
+    }
   });
 }
 
+
 function deconnexion() {
   utilisateurConnecte = null;
+  accesOfficierValide = false;
   viderCacheFrontend();
   afficherConnexion();
 }
@@ -126,48 +136,63 @@ function afficherChoixOfficier() {
       <h2>Bonjour ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</h2>
       <p>Que souhaites-tu faire ?</p>
       <button onclick="afficherCompetitionsJoueur()">Remplir mes présences</button>
-      <button onclick="afficherConnexionOfficier()" class="secondary-button">Accéder à l’espace officier</button>
+      <button onclick="afficherEspaceOfficier()" class="secondary-button">Accéder à l’espace officier</button>
       <p class="small-link" onclick="deconnexion()">Déconnexion</p>
     </div>
   `);
 }
 
-data.competitions.forEach(function (competition) {
 
-  if (!peutVoirCompetition(competition)) {
-    return;
-  }
+function afficherCompetitionsJoueur() {
+  definirModeCarte("normal");
+  afficherChargement("Compétitions disponibles");
 
-  html += `
-    <div class="competition-card">
-      <h3>${escapeHTML(competition.nom)}</h3>
+  chargerCompetitionsAvecCache(function (data) {
+    if (!data.succes) {
+      return afficherErreur(data.message);
+    }
 
-      <p>Statut : ${escapeHTML(competition.statut)}</p>
+    let html = `<div class="form-zone"><h2>Compétitions disponibles</h2>`;
+    let nbVisibles = 0;
 
-      <p>${escapeHTML(competition.description || "")}</p>
-
-      ${
-        peutRemplirCompetition(competition)
-          ? `
-            <button
-              onclick="ouvrirCompetition(
-                ${Number(competition.id)},
-                '${jsString(competition.nom)}'
-              )">
-              Ouvrir
-            </button>
-          `
-          : `
-            <button
-              class="secondary-button"
-              disabled>
-              Consultation uniquement
-            </button>
-          `
+    data.competitions.forEach(function (competition) {
+      if (!peutVoirCompetition(competition)) {
+        return;
       }
-    </div>
-  `;
-});
+
+      nbVisibles++;
+
+      html += `
+        <div class="competition-card">
+          <h3>${escapeHTML(competition.nom)}</h3>
+          <p>Statut : ${escapeHTML(competition.statut)}</p>
+          <p>${escapeHTML(competition.description || "")}</p>
+
+          ${
+            peutRemplirCompetition(competition)
+              ? `
+                <button onclick="ouvrirCompetition(${Number(competition.id)}, '${jsString(competition.nom)}', true)">
+                  Ouvrir
+                </button>
+              `
+              : `
+                <button onclick="ouvrirCompetition(${Number(competition.id)}, '${jsString(competition.nom)}', false)" class="secondary-button">
+                  Consulter
+                </button>
+              `
+          }
+        </div>
+      `;
+    });
+
+    if (nbVisibles === 0) {
+      html += `<p>Aucune compétition disponible.</p>`;
+    }
+
+    html += `<p class="small-link" onclick="deconnexion()">Déconnexion</p></div>`;
+    setContenu(html);
+  });
+}
 
 function chargerCompetitionsAvecCache(callback) {
   if (cacheFrontend.competitions && estCacheValide("competitions")) {
@@ -180,73 +205,149 @@ function chargerCompetitionsAvecCache(callback) {
   });
 }
 
-function ouvrirCompetition(idCompetition, nomCompetition) {
+function ouvrirCompetition(idCompetition, nomCompetition, peutModifier = true) {
   definirModeCarte("normal");
   afficherChargement(nomCompetition, "Chargement des dates et de tes réponses...");
+
   const pseudo = utilisateurConnecte.joueur.pseudo;
   const cleCache = "competitionComplete_" + idCompetition + "_" + pseudo.toLowerCase();
+
   if (cacheFrontend.competitionComplete[cleCache] && estCacheValide(cleCache)) {
     const dataCache = cacheFrontend.competitionComplete[cleCache];
-    afficherFormulairePresences(idCompetition, nomCompetition, dataCache.dates, dataCache.presences);
+    afficherFormulairePresences(
+      idCompetition,
+      nomCompetition,
+      dataCache.dates,
+      dataCache.presences,
+      peutModifier && dataCache.peutRemplir !== false
+    );
     return;
   }
+
   appelAPI("chargerCompetitionComplete", { idCompetition, pseudo }, function (data) {
-    if (!data.succes) return afficherErreur(data.message);
+    if (!data.succes) {
+      return afficherErreur(data.message);
+    }
+
     cacheFrontend.competitionComplete[cleCache] = data;
     cacheFrontend.timestamp[cleCache] = Date.now();
-    afficherFormulairePresences(idCompetition, nomCompetition, data.dates, data.presences);
+
+    afficherFormulairePresences(
+      idCompetition,
+      nomCompetition,
+      data.dates,
+      data.presences,
+      peutModifier && data.peutRemplir !== false
+    );
   });
 }
 
-function afficherFormulairePresences(idCompetition, nomCompetition, dates, presencesExistantes) {
+
+
+function afficherFormulairePresences(idCompetition, nomCompetition, dates, presencesExistantes, peutModifier = true) {
   definirModeCarte("normal");
-  let html = `<div class="form-zone"><h2>${escapeHTML(nomCompetition)}</h2><p>Pseudo : ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</p>`;
-  if (dates.length === 0) html += `<p>Aucune date définie pour cette compétition.</p>`;
+
+  let html = `
+    <div class="form-zone">
+      <h2>${escapeHTML(nomCompetition)}</h2>
+      <p>Pseudo : ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</p>
+  `;
+
+  if (!peutModifier) {
+    html += `
+      <div class="recap-box">
+        <p>Consultation uniquement : cette compétition n'est pas ouverte à la modification.</p>
+      </div>
+    `;
+  }
+
+  if (dates.length === 0) {
+    html += `<p>Aucune date définie pour cette compétition.</p>`;
+  }
 
   const indexPresences = {};
-  presencesExistantes.forEach(function (p) {
-    indexPresences[String(p.dateCompetition).trim()] = p;
+  presencesExistantes.forEach(function (presence) {
+    indexPresences[String(presence.dateCompetition).trim()] = presence;
   });
 
   dates.forEach(function (date) {
     const dateTexte = String(date.dateCompetition).trim();
     const presence = indexPresences[dateTexte] || {};
     const statutActuel = presence.statut || "Non renseigné";
-    const horairesActuels = String(presence.horairesDisponibles || "").split(",").map(h => h.trim()).filter(Boolean);
-    const horaires = String(date.horaires || "").split(",").map(h => h.trim()).filter(Boolean);
+    const horairesActuels = String(presence.horairesDisponibles || "")
+      .split(",")
+      .map(h => h.trim())
+      .filter(Boolean);
+    const horaires = String(date.horaires || "")
+      .split(",")
+      .map(h => h.trim())
+      .filter(Boolean);
+
+    const disabled = peutModifier ? "" : "disabled";
 
     html += `
       <div class="date-card">
         <h3>${escapeHTML(date.dateAffichage || dateTexte)}</h3>
-        <select class="select-statut" data-date="${escapeHTML(dateTexte)}" onchange="gererAffichageHoraires(this)">
+
+        <select class="select-statut" data-date="${escapeHTML(dateTexte)}" onchange="gererAffichageHoraires(this)" ${disabled}>
           <option value="Non renseigné" ${statutActuel === "Non renseigné" ? "selected" : ""}>⚪ Non renseigné</option>
           <option value="Présent" ${statutActuel === "Présent" ? "selected" : ""}>🟢 Présent</option>
           <option value="Absent" ${statutActuel === "Absent" ? "selected" : ""}>🔴 Absent</option>
           <option value="Remplaçant" ${statutActuel === "Remplaçant" ? "selected" : ""}>🔵 Remplaçant</option>
         </select>
-        <div class="horaires-zone" style="${statutActuel === "Présent" ? "" : "display:none;"}">
-          <p>Créneaux disponibles :</p>
-          <div class="horaires-selection">`;
 
-    if (horaires.length === 0) html += `<p>Aucun horaire défini pour cette date.</p>`;
+        <div class="horaires-zone" style="${statutActuel === "Présent" || statutActuel === "Remplaçant" ? "" : "display:none;"}">
+          <p>Créneaux disponibles :</p>
+          <div class="horaires-selection">
+    `;
+
+    if (horaires.length === 0) {
+      html += `<p>Aucun horaire défini pour cette date.</p>`;
+    }
+
     horaires.forEach(function (horaire) {
-      html += `<label class="checkbox-role"><input type="checkbox" class="horaire-checkbox" value="${escapeHTML(horaire)}" ${horairesActuels.includes(horaire) ? "checked" : ""}>${escapeHTML(horaire)}</label>`;
+      html += `
+        <label class="checkbox-role">
+          <input type="checkbox" class="horaire-checkbox" value="${escapeHTML(horaire)}" ${horairesActuels.includes(horaire) ? "checked" : ""} ${disabled}>
+          ${escapeHTML(horaire)}
+        </label>
+      `;
     });
-    html += `</div></div></div>`;
+
+    html += `
+          </div>
+        </div>
+      </div>
+    `;
   });
 
+  if (peutModifier) {
+    html += `
+      <button onclick="afficherRecapitulatif(${idCompetition}, '${jsString(nomCompetition)}')">
+        Vérifier mes réponses
+      </button>
+    `;
+  }
+
   html += `
-      <button onclick="afficherRecapitulatif(${idCompetition}, '${jsString(nomCompetition)}')">Vérifier mes réponses</button>
-      <button onclick="afficherCompetitionsJoueur()" class="secondary-button">Retour</button>
-    </div>`;
+      <button onclick="afficherCompetitionsJoueur()" class="secondary-button">
+        Retour
+      </button>
+    </div>
+  `;
+
   setContenu(html);
 }
+
+
 
 function gererAffichageHoraires(selectElement) {
   const dateCard = selectElement.closest(".date-card");
   const horairesZone = dateCard.querySelector(".horaires-zone");
   if (!horairesZone) return;
-  if (selectElement.value === "Présent") horairesZone.style.display = "";
+  if (selectElement.value === "Présent" || selectElement.value === "Remplaçant") {
+	horairesZone.style.display = "";
+  }
   else {
     horairesZone.style.display = "none";
     horairesZone.querySelectorAll(".horaire-checkbox").forEach(c => c.checked = false);
@@ -263,7 +364,7 @@ function afficherRecapitulatif(idCompetition, nomCompetition) {
     const dateCompetition = select.dataset.date;
     const statut = select.value;
     let horairesDisponibles = [];
-    if (statut === "Présent") {
+    if (statut === "Présent" || statut === "Remplaçant") {
       dateCard.querySelectorAll(".horaire-checkbox").forEach(function (caseHoraire) {
         if (caseHoraire.checked) horairesDisponibles.push(caseHoraire.value);
       });
@@ -278,12 +379,12 @@ function afficherRecapitulatif(idCompetition, nomCompetition) {
   let html = `<div class="form-zone"><h2>Vérification</h2><p>${escapeHTML(nomCompetition)}</p><div class="recap-box">`;
   presences.forEach(function (presence) {
     let texteHoraires = "";
-    if (presence.statut === "Présent") texteHoraires = presence.horairesDisponibles ? ` — Horaires : ${escapeHTML(presence.horairesDisponibles)}` : " — Aucun horaire sélectionné";
+    if (presence.statut === "Présent" || presence.statut === "Remplaçant") texteHoraires = presence.horairesDisponibles ? ` — Horaires : ${escapeHTML(presence.horairesDisponibles)}` : " — Aucun horaire sélectionné";
     html += `<p><strong>${escapeHTML(presence.dateCompetition)}</strong> → ${escapeHTML(presence.statut)}${texteHoraires}</p>`;
   });
   html += `</div><div class="recap-box"><p>🟢 Présent : ${nbPresent}</p><p>🔴 Absent : ${nbAbsent}</p><p>🔵 Remplaçant : ${nbRemplacant}</p><p>⚪ Non renseigné : ${nbNonRenseigne}</p></div>
     <button onclick='confirmerPresences(${idCompetition}, ${JSON.stringify(JSON.stringify(presences))})'>Confirmer</button>
-    <button onclick="ouvrirCompetition(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">Modifier</button></div>`;
+    <button onclick="ouvrirCompetition(${idCompetition}, '${jsString(nomCompetition)}', true)" class="secondary-button">Modifier</button></div>`;
   setContenu(html);
 }
 
@@ -292,52 +393,115 @@ function confirmerPresences(idCompetition, presencesJSON) {
   const pseudo = utilisateurConnecte.joueur.pseudo;
   afficherChargement("Sauvegarde en cours...", "Merci de patienter.");
   appelAPI("sauvegarderPresences", { idCompetition, pseudo, presences: JSON.stringify(presences) }, function (data) {
-    if (!data.succes) return afficherErreur(data.message, `<button onclick="ouvrirCompetition(${idCompetition}, 'Compétition')">Retour</button>`);
+    if (!data.succes) return afficherErreur(data.message, `<button onclick="ouvrirCompetition(${idCompetition}, 'Compétition', true)">Retour</button>`);
     viderCacheFrontend();
     setContenu(`<div class="form-zone"><h2>Disponibilités enregistrées ✅</h2><p>${escapeHTML(data.message)}</p><p>Ajouts : ${data.ajouts}</p><p>Modifications : ${data.modifications}</p><button onclick="afficherCompetitionsJoueur()">Retour aux compétitions</button></div>`);
   });
 }
 
-function afficherConnexionOfficier() {
-  definirModeCarte("normal");
-  const estSuperAdmin = utilisateurConnecte.joueur.pseudo.toLowerCase() === "raiju153";
-  setContenu(`
-    <div class="form-zone">
-      <h2>Accès officier</h2>
-      <p>Connecté : ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</p>
-      <label for="mdpOfficier">${estSuperAdmin ? "Mot de passe Super Admin" : "Mot de passe Officier"}</label>
-      <input type="password" id="mdpOfficier" placeholder="${estSuperAdmin ? "Mot de passe Super Admin" : "Mot de passe Officier"}" onkeydown="if(event.key==='Enter'){verifierAccesOfficier();}">
-      <button onclick="verifierAccesOfficier()">Valider</button>
-      <button onclick="afficherChoixOfficier()" class="secondary-button">Retour</button>
-      <p id="message"></p>
-    </div>`);
-}
-
 function verifierAccesOfficier() {
-  const motDePasse = document.getElementById("mdpOfficier").value;
   const message = document.getElementById("message");
-  if (motDePasse === "") {
-    message.textContent = "Merci de saisir le mot de passe.";
-    message.style.color = "#ff5555";
+  const champMotDePasse = document.getElementById("mdpOfficier");
+  const motDePasse = champMotDePasse ? champMotDePasse.value : "";
+
+  if (!estOfficierConnecte() && !estSuperAdminConnecte()) {
+    afficherMessageModal(
+      "Accès refusé",
+      "Ton compte n'a pas le rôle Officier."
+    );
     return;
   }
-  message.textContent = "Vérification...";
-  message.style.color = "#CFCFCF";
-  const estSuperAdmin = utilisateurConnecte.joueur.pseudo.toLowerCase() === "raiju153";
-  const actionAPI = estSuperAdmin ? "verifierMotDePasseSuperAdmin" : "verifierMotDePasseOfficier";
-  appelAPI(actionAPI, { pseudo: utilisateurConnecte.joueur.pseudo, motDePasse }, function(data) {
-    if (!data.succes) {
-      message.textContent = data.message;
+
+  if (!motDePasse) {
+    if (message) {
+      message.textContent = "Merci de saisir le mot de passe.";
       message.style.color = "#ff5555";
+    }
+    return;
+  }
+
+  if (message) {
+    message.textContent = "Vérification du mot de passe...";
+    message.style.color = "#CFCFCF";
+  }
+
+  const action = estSuperAdminConnecte()
+    ? "verifierMotDePasseSuperAdmin"
+    : "verifierMotDePasseOfficier";
+
+  verifierMotDePasseAppsScript(action, {
+    pseudo: utilisateurConnecte.joueur.pseudo,
+    motDePasse: motDePasse
+  }).then(function (reponse) {
+    if (!reponse.succes) {
+      if (message) {
+        message.textContent = reponse.message || "Mot de passe incorrect.";
+        message.style.color = "#ff5555";
+      }
       return;
     }
-    afficherEspaceOfficier();
+
+    accesOfficierValide = true;
+    afficherChoixOfficier();
+  }).catch(function (erreur) {
+    if (message) {
+      message.textContent = "Impossible de vérifier le mot de passe.";
+      message.style.color = "#ff5555";
+    }
+    console.error("Erreur vérification mot de passe", erreur);
+  });
+}
+
+function verifierMotDePasseAppsScript(action, parametres) {
+  const PASSWORD_API_URL = "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2WoCZmifII1DiJqeLpBZ0S0SRj8RC2PFq-aw-V9EjLU_jeA/exec";
+
+  return new Promise(function (resolve, reject) {
+    const nomCallback = "callback_mdp_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
+    const script = document.createElement("script");
+    let timeout;
+
+    window[nomCallback] = function (reponse) {
+      clearTimeout(timeout);
+      delete window[nomCallback];
+      if (script.parentNode) script.parentNode.removeChild(script);
+      resolve(reponse);
+    };
+
+    let url = PASSWORD_API_URL + "?action=" + encodeURIComponent(action);
+
+    Object.keys(parametres || {}).forEach(function (cle) {
+      url += "&" + encodeURIComponent(cle) + "=" + encodeURIComponent(parametres[cle]);
+    });
+
+    url += "&callback=" + encodeURIComponent(nomCallback);
+    url += "&t=" + Date.now();
+
+    script.src = url;
+
+    script.onerror = function () {
+      clearTimeout(timeout);
+      delete window[nomCallback];
+      if (script.parentNode) script.parentNode.removeChild(script);
+      reject(new Error("Erreur de connexion à l'API mot de passe."));
+    };
+
+    timeout = setTimeout(function () {
+      delete window[nomCallback];
+      if (script.parentNode) script.parentNode.removeChild(script);
+      reject(new Error("Temps d'attente dépassé."));
+    }, 15000);
+
+    document.body.appendChild(script);
   });
 }
 
 function afficherEspaceOfficier() {
-
   definirModeCarte("large");
+
+  if (!accesOfficierValide) {
+    afficherDemandeMotDePasseOfficier();
+    return;
+  }
 
   if (
     cacheFrontend.donneesOfficierInitiales &&
@@ -353,8 +517,7 @@ function afficherEspaceOfficier() {
   appelAPI(
     "chargerDonneesOfficierInitiales",
     {},
-    function(data) {
-
+    function (data) {
       if (!data.succes) {
         afficherMessageModal(
           "Erreur",
@@ -364,7 +527,6 @@ function afficherEspaceOfficier() {
       }
 
       mettreEnCache("donneesOfficierInitiales", data);
-
       construireTableauDeBordOfficier(data);
     }
   );
@@ -439,16 +601,44 @@ function construireTableauDeBordOfficier(data) {
 function afficherSelectionCompetitionOfficier() {
   definirModeCarte("large");
   afficherChargement("Choisir une compétition", "Chargement des compétitions...");
+
   chargerCompetitionsAvecCache(function (data) {
-    if (!data.succes) return afficherErreur(data.message, `<button onclick="afficherEspaceOfficier()">Retour</button>`);
+    if (!data.succes) {
+      return afficherErreur(data.message, `<button onclick="afficherEspaceOfficier()">Retour</button>`);
+    }
+
     let html = `<div class="form-zone"><h2>Choisir une compétition</h2>`;
+    let nbVisibles = 0;
+
     data.competitions.forEach(function (competition) {
-      html += `<div class="competition-card"><h3>${escapeHTML(competition.nom)}</h3><p>Statut : ${escapeHTML(competition.statut)}</p><p>${escapeHTML(competition.description || "")}</p><button onclick="afficherTableauPresencesOfficier(${Number(competition.id)}, '${jsString(competition.nom)}')">Voir les présences</button></div>`;
+      if (!peutVoirCompetition(competition)) {
+        return;
+      }
+
+      nbVisibles++;
+
+      html += `
+        <div class="competition-card">
+          <h3>${escapeHTML(competition.nom)}</h3>
+          <p>Statut : ${escapeHTML(competition.statut)}</p>
+          <p>${escapeHTML(competition.description || "")}</p>
+          <button onclick="afficherTableauPresencesOfficier(${Number(competition.id)}, '${jsString(competition.nom)}')">
+            Voir les présences
+          </button>
+        </div>
+      `;
     });
+
+    if (nbVisibles === 0) {
+      html += `<p>Aucune compétition visible.</p>`;
+    }
+
     html += `<button onclick="afficherEspaceOfficier()" class="secondary-button">Retour</button></div>`;
     setContenu(html);
   });
 }
+
+
 
 function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
   definirModeCarte("large");
@@ -458,7 +648,7 @@ function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
     construireTableauPresencesOfficier(idCompetition, nomCompetition, cacheFrontend.tableauPresences[cleCache]);
     return;
   }
-  appelAPI("genererTableauPresences", { idCompetition }, function (data) {
+  appelAPI("genererTableauPresences", { idCompetition, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
     if (!data.succes) return afficherErreur(data.message);
     cacheFrontend.tableauPresences[cleCache] = data;
     cacheFrontend.timestamp[cleCache] = Date.now();
@@ -527,7 +717,7 @@ function afficherGestionCompetitions() {
         return;
       }
 
-      const statut = String(competition.statut || "").toLowerCase();
+      const statut = normaliserStatutCompetitionFrontend(competition.statut);
 
       html += `
         <div class="competition-card">
@@ -540,7 +730,7 @@ function afficherGestionCompetitions() {
           <p>${escapeHTML(competition.description || "")}</p>
       `;
 
-      if (statut !== "archivée") {
+      if (statut !== "archivee" && peutModifierCompetition(competition)) {
 
         html += `
           <button
@@ -553,7 +743,7 @@ function afficherGestionCompetitions() {
 
       if (estOfficierConnecte() || estSuperAdminConnecte()) {
 
-        if (statut === "brouillon" || statut === "fermée") {
+        if (statut === "brouillon" || statut === "fermee") {
           html += `
             <button
               onclick="changerStatutCompetition(${Number(competition.id)}, 'Ouverte')"
@@ -576,7 +766,7 @@ function afficherGestionCompetitions() {
 
       if (estSuperAdminConnecte()) {
 
-        if (statut !== "archivée") {
+        if (statut !== "archivee") {
           html += `
             <button
               onclick="changerStatutCompetition(${Number(competition.id)}, 'Archivée')"
@@ -586,7 +776,7 @@ function afficherGestionCompetitions() {
           `;
         }
 
-        if (statut === "archivée") {
+        if (statut === "archivee") {
           html += `
             <button
               onclick="confirmerSuppressionCompetition(${Number(competition.id)}, '${jsString(competition.nom)}')"
@@ -614,9 +804,33 @@ function afficherGestionCompetitions() {
 }
 
 function confirmerSuppressionCompetition(idCompetition, nomCompetition) {
-  afficherMessageModal(
-    "Suppression non active",
-    "La suppression définitive sera ajoutée à l'étape suivante pour : " + escapeHTML(nomCompetition)
+  afficherConfirmation(
+    "Supprimer définitivement ?",
+    "Cette action supprimera la compétition archivée, ses dates et ses présences. Confirmer la suppression définitive de : " + nomCompetition + " ?",
+    function () {
+      supprimerCompetitionDepuisSite(idCompetition);
+    }
+  );
+}
+
+
+
+
+function supprimerCompetitionDepuisSite(idCompetition) {
+  appelAPI(
+    "supprimerCompetition",
+    {
+      idCompetition,
+      utilisateur: utilisateurConnecte.joueur.pseudo
+    },
+    function (data) {
+      if (!data.succes) {
+        return afficherMessageModal("Erreur", data.message);
+      }
+
+      viderCacheFrontend();
+      afficherMessageModal("Compétition supprimée", data.message, afficherGestionCompetitions);
+    }
   );
 }
 
@@ -839,7 +1053,7 @@ function afficherJournalActivite() {
 }
 
 function exporterCSV(idCompetition, nomCompetition) {
-  appelAPI("genererExportCSV", { idCompetition }, function (data) {
+  appelAPI("genererExportCSV", { idCompetition, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
     if (!data.succes) return alert(data.message);
     const blob = new Blob(["\uFEFF" + data.csv], { type: "text/csv;charset=utf-8;" });
     const lien = document.createElement("a");
@@ -854,12 +1068,44 @@ function exporterCSV(idCompetition, nomCompetition) {
 }
 
 function formaterAffichagePresence(dispo) {
+
+  const horaires = String(dispo.horairesDisponibles || "")
+    .split(",")
+    .map(h => h.trim())
+    .filter(Boolean);
+
   if (dispo.statut === "Présent") {
-    const horaires = String(dispo.horairesDisponibles || "").split(",").map(h => h.trim()).filter(Boolean);
-    return horaires.length > 0 ? "🟢(" + horaires.length + ")" : "🟢";
+
+  if (horaires.length > 0) {
+    return `
+      <div class="presence-cell">
+        <div>🟢</div>
+        <div class="nb-horaires">(${horaires.length})</div>
+      </div>
+    `;
   }
-  if (dispo.statut === "Absent") return "🔴";
-  if (dispo.statut === "Remplaçant") return "🔵";
+
+  return "🟢";
+}
+
+if (dispo.statut === "Remplaçant") {
+
+  if (horaires.length > 0) {
+    return `
+      <div class="presence-cell">
+        <div>🔵</div>
+        <div class="nb-horaires">(${horaires.length})</div>
+      </div>
+    `;
+  }
+
+  return "🔵";
+}
+
+  if (dispo.statut === "Absent") {
+    return "🔴";
+  }
+
   return "⚪";
 }
 
@@ -868,7 +1114,10 @@ function afficherDetailPresence(pseudoJSON, dispoJSON) {
   const dispo = JSON.parse(dispoJSON);
   const horairesSelectionnes = String(dispo.horairesDisponibles || "").split(",").map(h => h.trim()).filter(Boolean);
   let horairesHTML = "";
-  if (dispo.statut === "Présent" && horairesSelectionnes.length > 0) horairesHTML = horairesSelectionnes.map(h => `<span class="horaire-badge">✅ ${escapeHTML(h)}</span>`).join("");
+  if (
+  (dispo.statut === "Présent" || dispo.statut === "Remplaçant") &&
+  horairesSelectionnes.length > 0
+) horairesHTML = horairesSelectionnes.map(h => `<span class="horaire-badge">✅ ${escapeHTML(h)}</span>`).join("");
   else horairesHTML = `<p>Aucun horaire disponible.</p>`;
   afficherMessageModal(escapeHTML(pseudo) + " — " + escapeHTML(dispo.dateAffichage), `<p>Statut : <strong>${escapeHTML(dispo.statut)}</strong></p><div class="horaires-modal">${horairesHTML}</div>`);
 }
@@ -938,66 +1187,34 @@ function fermerModal() {
 
 function appelAPI(action, parametres, callback) {
   const debut = performance.now();
-  const nomCallback = "callback_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
 
-  let script = document.createElement("script");
-  let timeout;
+  console.log("SUPABASE ▶️", action, parametres);
 
-  console.log("API ▶️", action, parametres);
-
-  window[nomCallback] = function (reponse) {
-    clearTimeout(timeout);
-
-    const duree = Math.round(performance.now() - debut);
-    console.log("API ✅", action, duree + " ms", reponse);
-
-    try {
+  apiSupabase(action, parametres || {})
+    .then(function (reponse) {
+      const duree = Math.round(performance.now() - debut);
+      console.log("SUPABASE ✅", action, duree + " ms", reponse);
       callback(reponse);
-    } finally {
-      delete window[nomCallback];
+    })
+    .catch(function (erreur) {
+      console.error("SUPABASE ❌", action, erreur);
 
-      if (script && script.parentNode) {
-        script.parentNode.removeChild(script);
-      }
-    }
-  };
+      callback({
+        succes: false,
+        message: "Erreur Supabase.",
+        details: erreur.message || String(erreur)
+      });
+    });
+}
 
-  let url = API_URL + "?action=" + encodeURIComponent(action);
 
-  for (const cle in parametres) {
-    url += "&" + encodeURIComponent(cle) + "=" + encodeURIComponent(parametres[cle]);
-  }
 
-  url += "&callback=" + encodeURIComponent(nomCallback);
-  url += "&t=" + Date.now();
-
-  script.src = url;
-
-  script.onerror = function () {
-    clearTimeout(timeout);
-    delete window[nomCallback];
-
-    if (script && script.parentNode) {
-      script.parentNode.removeChild(script);
-    }
-
-    afficherMessageModal("Erreur", "Erreur de connexion à l'API.");
-  };
-
-  timeout = setTimeout(function () {
-    delete window[nomCallback];
-
-    if (script && script.parentNode) {
-      script.parentNode.removeChild(script);
-    }
-
-    afficherMessageModal(
-      "Temps d'attente dépassé",
-      "Le serveur met trop de temps à répondre. Réessaie dans quelques secondes."
-    );
-  }, 30000);
-
-  document.body.appendChild(script);
+function normaliserStatutCompetitionFrontend(statut) {
+  return String(statut || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function getRolesUtilisateur() {
@@ -1017,9 +1234,9 @@ function estSuperAdminConnecte() {
 
 function peutVoirCompetition(competition) {
 
-  const statut = String(competition.statut || "").toLowerCase();
+  const statut = normaliserStatutCompetitionFrontend(competition.statut);
 
-  if (statut === "archivée") {
+  if (statut === "archivee") {
     return estSuperAdminConnecte();
   }
 
@@ -1032,7 +1249,7 @@ function peutVoirCompetition(competition) {
 
 function peutRemplirCompetition(competition) {
 
-  const statut = String(competition.statut || "").toLowerCase();
+  const statut = normaliserStatutCompetitionFrontend(competition.statut);
 
   if (statut === "ouverte") {
     return true;
@@ -1047,7 +1264,7 @@ function peutRemplirCompetition(competition) {
 
 function peutModifierCompetition(competition) {
 
-  const statut = String(competition.statut || "").toLowerCase();
+  const statut = normaliserStatutCompetitionFrontend(competition.statut);
 
   if (statut === "brouillon") {
     return estOfficierConnecte() || estSuperAdminConnecte();
@@ -1062,4 +1279,37 @@ function peutModifierCompetition(competition) {
 
 function peutSupprimerCompetition(competition) {
   return estSuperAdminConnecte();
+}
+
+function afficherDemandeMotDePasseOfficier() {
+  definirModeCarte("normal");
+
+  const estSuperAdmin = estSuperAdminConnecte();
+
+  setContenu(`
+    <div class="form-zone">
+      <h2>${estSuperAdmin ? "Accès Super Admin" : "Accès Officier"}</h2>
+
+      <p>Connecté : ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</p>
+
+      <label for="mdpOfficier">
+        ${estSuperAdmin ? "Mot de passe Super Admin" : "Mot de passe Officier"}
+      </label>
+
+      <input
+        type="password"
+        id="mdpOfficier"
+        placeholder="${estSuperAdmin ? "Mot de passe Super Admin" : "Mot de passe Officier"}"
+        onkeydown="if(event.key==='Enter'){verifierAccesOfficier();}"
+      >
+
+      <button onclick="verifierAccesOfficier()">Valider</button>
+
+      <button onclick="deconnexion()" class="secondary-button">
+        Retour
+      </button>
+
+      <p id="message"></p>
+    </div>
+  `);
 }
