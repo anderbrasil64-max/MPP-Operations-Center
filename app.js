@@ -78,7 +78,9 @@ function afficherChoixOfficier() {
       <p>Que souhaites-tu faire ?</p>
 
       <button onclick="afficherCompetitionsJoueur()">Remplir mes présences</button>
-      <button onclick="afficherEspaceOfficier()" class="secondary-button">Accéder à l’espace officier</button>
+      <button onclick="afficherConnexionOfficier()" class="secondary-button">
+  Accéder à l’espace officier
+</button>
 
       <p class="small-link" onclick="deconnexion()">Déconnexion</p>
     </div>
@@ -2212,4 +2214,84 @@ function calculerEffectifParHoraire(dates, lignes) {
   });
 
   return resultats;
+}
+
+function afficherConnexionOfficier() {
+
+  definirModeCarte("normal");
+
+  const contenu = document.getElementById("contenu");
+
+  contenu.innerHTML = `
+    <div class="form-zone">
+      <h2>Accès officier</h2>
+      <p>Connecté : ${utilisateurConnecte.joueur.pseudo}</p>
+
+      <label for="mdpOfficier">
+  ${
+    utilisateurConnecte.joueur.pseudo.toLowerCase() === "raiju153"
+      ? "Mot de passe Super Admin"
+      : "Mot de passe Officier"
+  }
+</label>
+      <input
+  type="password"
+  id="mdpOfficier"
+  placeholder="${
+    utilisateurConnecte.joueur.pseudo.toLowerCase() === "raiju153"
+      ? "Mot de passe Super Admin"
+      : "Mot de passe Officier"
+  }">
+
+      <button onclick="verifierAccesOfficier()">
+        Valider
+      </button>
+
+      <button onclick="afficherChoixOfficier()" class="secondary-button">
+        Retour
+      </button>
+
+      <p id="message"></p>
+    </div>
+  `;
+}
+
+function verifierAccesOfficier() {
+
+  const motDePasse = document.getElementById("mdpOfficier").value;
+  const message = document.getElementById("message");
+
+  if (motDePasse === "") {
+    message.textContent = "Merci de saisir le mot de passe.";
+    message.style.color = "#ff5555";
+    return;
+  }
+
+  message.textContent = "Vérification...";
+  message.style.color = "#CFCFCF";
+
+  const estSuperAdmin =
+    utilisateurConnecte.joueur.pseudo.toLowerCase() === "raiju153";
+
+  const actionAPI = estSuperAdmin
+    ? "verifierMotDePasseSuperAdmin"
+    : "verifierMotDePasseOfficier";
+
+  appelAPI(
+    actionAPI,
+    {
+      pseudo: utilisateurConnecte.joueur.pseudo,
+      motDePasse: motDePasse
+    },
+    function(data) {
+
+      if (!data.succes) {
+        message.textContent = data.message;
+        message.style.color = "#ff5555";
+        return;
+      }
+
+      afficherEspaceOfficier();
+    }
+  );
 }
