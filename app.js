@@ -4,7 +4,7 @@
    Version Alpha 0.4.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.5.0 - Supabase";
+const VERSION_SITE = "Alpha 0.5.2 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
