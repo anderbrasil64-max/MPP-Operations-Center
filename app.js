@@ -4,7 +4,7 @@
    Version Alpha 0.4.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.5.2 - Supabase";
+const VERSION_SITE = "Alpha 0.5.3 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -1340,17 +1340,56 @@ function supprimerDateDepuisSite(idDate, idCompetition, nomCompetition) {
   });
 }
 
+let joueursGestionCache = [];
+
 function afficherGestionJoueurs() {
   definirModeCarte("large");
   afficherChargement("Gestion des joueurs");
+
   appelAPI("chargerJoueurs", {}, function (data) {
-    if (!data.succes) return afficherMessageModal("Erreur", data.message);
-    let html = `<div class="form-zone"><h2>Gestion des joueurs</h2><button onclick="afficherFormulaireAjoutJoueur()">➕ Ajouter un joueur</button><div class="table-container"><table class="presence-table"><thead><tr><th>Pseudo</th><th>Rôles</th><th>Statut</th><th>Dernière modification</th><th>Actions</th></tr></thead><tbody>`;
-    data.joueurs.forEach(function (joueur) {
-      html += `<tr><td>${escapeHTML(joueur.pseudo)}</td><td>${escapeHTML(joueur.roles)}</td><td>${escapeHTML(joueur.statut)}</td><td>${escapeHTML(joueur.derniereModification || "-")}</td><td><button class="secondary-button" onclick='afficherFormulaireModificationJoueur(${JSON.stringify(joueur)})'>✏️ Modifier</button></td></tr>`;
-    });
-    html += `</tbody></table></div><button onclick="afficherEspaceOfficier()" class="secondary-button">Retour</button></div>`;
+    if (!data.succes) {
+      return afficherMessageModal("Erreur", data.message);
+    }
+
+    joueursGestionCache = data.joueurs || [];
+
+    let html = `
+      <div class="form-zone">
+        <h2>Gestion des joueurs</h2>
+
+        <button onclick="afficherFormulaireAjoutJoueur()">
+          ➕ Ajouter un joueur
+        </button>
+
+        <div class="stats-box">
+          <h3>Filtres et tri</h3>
+
+          <label for="rechercheJoueur">Rechercher un pseudo</label>
+          <input
+            type="text"
+            id="rechercheJoueur"
+            placeholder="Ex : ap"
+            oninput="appliquerFiltresGestionJoueurs()"
+          >
+
+          <label for="triJoueurs">Trier par</label>
+          <select id="triJoueurs" onchange="appliquerFiltresGestionJoueurs()">
+            <option value="pseudo">Ordre alphabétique</option>
+            <option value="grade">Grade</option>
+            <option value="statut">Statut</option>
+          </select>
+        </div>
+
+        <div id="zoneTableauJoueurs"></div>
+
+        <button onclick="afficherEspaceOfficier()" class="secondary-button">
+          Retour
+        </button>
+      </div>
+    `;
+
     setContenu(html);
+    appliquerFiltresGestionJoueurs();
   });
 }
 
@@ -1358,7 +1397,12 @@ function afficherFormulaireAjoutJoueur() {
   definirModeCarte("large");
 
   const optionSuperAdmin = estSuperAdminConnecte()
-    ? `<label class="checkbox-role"><input type="checkbox" id="joueurRoleSuperAdmin">SuperAdmin</label>`
+    ? `
+      <label class="checkbox-role">
+        <input type="checkbox" id="joueurRoleSuperAdmin">
+        SuperAdmin
+      </label>
+    `
     : "";
 
   setContenu(`
@@ -1366,16 +1410,40 @@ function afficherFormulaireAjoutJoueur() {
       <h2>Ajouter un joueur</h2>
 
       <label for="nouveauPseudoJoueur">Pseudo WoT</label>
-      <input type="text" id="nouveauPseudoJoueur" placeholder="Ex : NouveauJoueur">
+      <input
+        type="text"
+        id="nouveauPseudoJoueur"
+        placeholder="Ex : NouveauJoueur"
+      >
 
-      <label>Rôles</label>
+      <label>Grades</label>
       <div class="roles-selection">
         ${optionSuperAdmin}
-        <label class="checkbox-role"><input type="checkbox" id="joueurRoleOfficier">Officier</label>
-        <label class="checkbox-role"><input type="checkbox" id="joueurRoleStrateur">Strateur</label>
-        <label class="checkbox-role"><input type="checkbox" id="joueurRoleSoldat" checked>Soldat</label>
-        <label class="checkbox-role"><input type="checkbox" id="joueurRoleReserviste">Réserviste</label>
-        <label class="checkbox-role"><input type="checkbox" id="joueurRoleRecrue">Recrue</label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="joueurRoleOfficier">
+          Officier
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="joueurRoleStrateur">
+          Strateur
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="joueurRoleSoldat" checked>
+          Soldat
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="joueurRoleReserviste">
+          Réserviste
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="joueurRoleRecrue">
+          Recrue
+        </label>
       </div>
 
       <label for="nouveauStatutJoueur">Statut</label>
@@ -1385,8 +1453,13 @@ function afficherFormulaireAjoutJoueur() {
         <option value="Suspendu">Suspendu</option>
       </select>
 
-      <button onclick="ajouterJoueurDepuisSite()">Créer le joueur</button>
-      <button onclick="afficherGestionJoueurs()" class="secondary-button">Annuler</button>
+      <button onclick="ajouterJoueurDepuisSite()">
+        Créer le joueur
+      </button>
+
+      <button onclick="afficherGestionJoueurs()" class="secondary-button">
+        Annuler
+      </button>
     </div>
   `);
 }
@@ -1453,41 +1526,69 @@ function afficherFormulaireModificationJoueur(joueur) {
         value="${escapeHTML(joueur.pseudo)}"
       >
 
-      <label>Rôles</label>
+      <label>Grades</label>
       <div class="roles-selection">
         ${optionSuperAdmin}
 
         <label class="checkbox-role">
-          <input type="checkbox" id="modifierRoleOfficier" ${rolesActuels.includes("Officier") ? "checked" : ""}>
+          <input
+            type="checkbox"
+            id="modifierRoleOfficier"
+            ${rolesActuels.includes("Officier") ? "checked" : ""}
+          >
           Officier
         </label>
 
         <label class="checkbox-role">
-          <input type="checkbox" id="modifierRoleStrateur" ${rolesActuels.includes("Strateur") ? "checked" : ""}>
+          <input
+            type="checkbox"
+            id="modifierRoleStrateur"
+            ${rolesActuels.includes("Strateur") ? "checked" : ""}
+          >
           Strateur
         </label>
 
         <label class="checkbox-role">
-          <input type="checkbox" id="modifierRoleSoldat" ${rolesActuels.includes("Soldat") ? "checked" : ""}>
+          <input
+            type="checkbox"
+            id="modifierRoleSoldat"
+            ${rolesActuels.includes("Soldat") ? "checked" : ""}
+          >
           Soldat
         </label>
 
         <label class="checkbox-role">
-          <input type="checkbox" id="modifierRoleReserviste" ${rolesActuels.includes("Réserviste") ? "checked" : ""}>
+          <input
+            type="checkbox"
+            id="modifierRoleReserviste"
+            ${rolesActuels.includes("Réserviste") ? "checked" : ""}
+          >
           Réserviste
         </label>
 
         <label class="checkbox-role">
-          <input type="checkbox" id="modifierRoleRecrue" ${rolesActuels.includes("Recrue") ? "checked" : ""}>
+          <input
+            type="checkbox"
+            id="modifierRoleRecrue"
+            ${rolesActuels.includes("Recrue") ? "checked" : ""}
+          >
           Recrue
         </label>
       </div>
 
       <label for="modifierStatutJoueur">Statut</label>
       <select id="modifierStatutJoueur">
-        <option value="Actif" ${joueur.statut === "Actif" ? "selected" : ""}>Actif</option>
-        <option value="Inactif" ${joueur.statut === "Inactif" ? "selected" : ""}>Inactif</option>
-        <option value="Suspendu" ${joueur.statut === "Suspendu" ? "selected" : ""}>Suspendu</option>
+        <option value="Actif" ${joueur.statut === "Actif" ? "selected" : ""}>
+          Actif
+        </option>
+
+        <option value="Inactif" ${joueur.statut === "Inactif" ? "selected" : ""}>
+          Inactif
+        </option>
+
+        <option value="Suspendu" ${joueur.statut === "Suspendu" ? "selected" : ""}>
+          Suspendu
+        </option>
       </select>
 
       <button onclick="modifierJoueurDepuisSite(${Number(joueur.id)})">
@@ -2175,4 +2276,112 @@ function confirmerModificationCompetition(configJSON) {
       );
     }
   );
+}
+
+function appliquerFiltresGestionJoueurs() {
+  const recherche = String(document.getElementById("rechercheJoueur")?.value || "")
+    .trim()
+    .toLowerCase();
+
+  const tri = document.getElementById("triJoueurs")?.value || "pseudo";
+
+  let joueursFiltres = joueursGestionCache.filter(function (joueur) {
+    return String(joueur.pseudo || "")
+      .toLowerCase()
+      .includes(recherche);
+  });
+
+  joueursFiltres.sort(function (a, b) {
+    if (tri === "grade") {
+      return calculerPrioriteGrade(a.roles) - calculerPrioriteGrade(b.roles)
+        || String(a.pseudo || "").localeCompare(String(b.pseudo || ""));
+    }
+
+    if (tri === "statut") {
+      return calculerPrioriteStatut(a.statut) - calculerPrioriteStatut(b.statut)
+        || String(a.pseudo || "").localeCompare(String(b.pseudo || ""));
+    }
+
+    return String(a.pseudo || "").localeCompare(String(b.pseudo || ""));
+  });
+
+  afficherTableauGestionJoueurs(joueursFiltres);
+}
+
+function calculerPrioriteGrade(roles) {
+  const texteRoles = String(roles || "").toLowerCase();
+
+  if (texteRoles.includes("superadmin")) return 1;
+  if (texteRoles.includes("officier")) return 2;
+  if (texteRoles.includes("strateur")) return 3;
+  if (texteRoles.includes("soldat")) return 4;
+  if (texteRoles.includes("réserviste") || texteRoles.includes("reserviste")) return 5;
+  if (texteRoles.includes("recrue")) return 6;
+
+  return 99;
+}
+
+function calculerPrioriteStatut(statut) {
+  const texteStatut = String(statut || "").toLowerCase();
+
+  if (texteStatut === "actif") return 1;
+  if (texteStatut === "inactif") return 2;
+  if (texteStatut === "suspendu") return 3;
+
+  return 99;
+}
+
+function afficherTableauGestionJoueurs(joueurs) {
+  const zone = document.getElementById("zoneTableauJoueurs");
+
+  if (!zone) return;
+
+  let html = `
+    <div class="table-container">
+      <table class="presence-table">
+        <thead>
+          <tr>
+            <th>Pseudo</th>
+            <th>Grade</th>
+            <th>Statut</th>
+            <th>Dernière modification</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+  `;
+
+  if (joueurs.length === 0) {
+    html += `
+      <tr>
+        <td colspan="5">Aucun joueur trouvé.</td>
+      </tr>
+    `;
+  }
+
+  joueurs.forEach(function (joueur) {
+    html += `
+      <tr>
+        <td>${escapeHTML(joueur.pseudo)}</td>
+        <td>${escapeHTML(joueur.roles || "-")}</td>
+        <td>${escapeHTML(joueur.statut || "-")}</td>
+        <td>${escapeHTML(joueur.derniereModification || "-")}</td>
+        <td>
+          <button
+            class="secondary-button"
+            onclick='afficherFormulaireModificationJoueur(${JSON.stringify(joueur)})'>
+            ✏️ Modifier
+          </button>
+        </td>
+      </tr>
+    `;
+  });
+
+  html += `
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  zone.innerHTML = html;
 }
