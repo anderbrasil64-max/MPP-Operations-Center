@@ -130,7 +130,11 @@ function sbCompetitionObj(competition) {
     dateCreation: competition.date_creation,
     creePar: competition.cree_par,
     rolesAutorises: competition.roles_autorises,
-    description: competition.description
+    description: competition.description,
+    fermetureAutoActive: competition.fermeture_auto_active || false,
+    heureOuverture: competition.heure_ouverture || "",
+    heureFermeture: competition.heure_fermeture || "",
+    dernierTraitementAuto: competition.dernier_traitement_auto || ""
   };
 }
 
@@ -208,10 +212,16 @@ async function apiSupabase(action, parametres) {
       return chargerDonneesOfficierInitialesSupabase();
 
     case "genererTableauPresences":
-      return genererTableauPresencesSupabase(parametres.idCompetition, parametres.utilisateur);
+      return genererTableauPresencesSupabase(
+        parametres.idCompetition,
+        parametres.utilisateur
+      );
 
     case "genererExportCSV":
-      return genererExportCSVSupabase(parametres.idCompetition, parametres.utilisateur);
+      return genererExportCSVSupabase(
+        parametres.idCompetition,
+        parametres.utilisateur
+      );
 
     case "chargerJoueursSansReponse":
       return chargerJoueursSansReponseSupabase(parametres.idCompetition);
@@ -225,6 +235,12 @@ async function apiSupabase(action, parametres) {
 
     case "creerCompetitionComplete":
       return creerCompetitionCompleteSupabase(
+        JSON.parse(parametres.config || "{}"),
+        parametres.utilisateur
+      );
+
+    case "modifierCompetitionComplete":
+      return modifierCompetitionCompleteSupabase(
         JSON.parse(parametres.config || "{}"),
         parametres.utilisateur
       );
@@ -271,10 +287,6 @@ async function apiSupabase(action, parametres) {
 
     case "chargerJournalActivite":
       return chargerJournalActiviteSupabase();
-
-    case "verifierMotDePasseOfficier":
-    case "verifierMotDePasseSuperAdmin":
-      return { succes: true, message: "Accès autorisé par rôle Supabase." };
 
     default:
       return sbErreur("Action Supabase inconnue : " + action);
@@ -583,8 +595,13 @@ async function sauvegarderPresencesSupabase(idCompetition, pseudo, presences) {
 }
 
 async function creerCompetitionCompleteSupabase(config, utilisateur) {
-  if (!sbEstSuperAdminPseudo(utilisateur) && !(await sbUtilisateurEstOfficier(utilisateur))) {
-    return sbErreur("Accès refusé : seul un officier peut créer une compétition.");
+  if (
+    !sbEstSuperAdminPseudo(utilisateur) &&
+    !(await sbUtilisateurEstOfficier(utilisateur))
+  ) {
+    return sbErreur(
+      "Accès refusé : seul un officier peut créer une compétition."
+    );
   }
 
   const { data: competition, error } = await supabaseClient
@@ -594,14 +611,19 @@ async function creerCompetitionCompleteSupabase(config, utilisateur) {
       statut: config.statut || "Brouillon",
       cree_par: utilisateur || "Inconnu",
       roles_autorises: config.rolesAutorises || "",
-      description: config.description || ""
+      description: config.description || "",
+      fermeture_auto_active: !!config.fermetureAutoActive,
+      heure_ouverture: config.heureOuvertureAuto || null,
+      heure_fermeture: config.heureFermetureAuto || null
     }])
     .select()
     .single();
 
-  if (error) return sbErreur(error.message);
+  if (error) {
+    return sbErreur(error.message);
+  }
 
-  const lignesDates = (config.dates || []).map(function (dateCompetition) {
+  const lignesDates = (config.dates || []).map(function(dateCompetition) {
     return {
       competition_id: competition.id,
       date_competition: sbFormatDateISO(dateCompetition),
@@ -614,13 +636,22 @@ async function creerCompetitionCompleteSupabase(config, utilisateur) {
       .from("dates_competition")
       .insert(lignesDates);
 
-    if (erreurDates) return sbErreur(erreurDates.message);
+    if (erreurDates) {
+      return sbErreur(erreurDates.message);
+    }
   }
 
   await sbJournaliser(
     utilisateur,
     "Création compétition complète",
-    "ID " + competition.id + " | Nom : " + config.nom + " | Dates : " + lignesDates.length
+    "ID " +
+      competition.id +
+      " | Nom : " +
+      config.nom +
+      " | Dates : " +
+      lignesDates.length +
+      " | Fermeture auto : " +
+      (config.fermetureAutoActive ? "Oui" : "Non")
   );
 
   return {
@@ -1063,5 +1094,142 @@ async function changerMotDePasseSupabase(pseudo, ancienMdp, nouveauMdp) {
   return {
     succes: true,
     message: "Mot de passe modifié avec succès."
+  };
+}
+
+async function appliquerOuverturesFermeturesAutomatiquesSupabase() {
+  const maintenant = new Date();
+
+  const heureActuelle =
+    String(maintenant.getHours()).padStart(2, "0") +
+    ":" +
+    String(maintenant.getMinutes()).padStart(2, "0");
+
+  const dateAujourdHui =
+    maintenant.getFullYear() +
+    "-" +
+    String(maintenant.getMonth() + 1).padStart(2, "0") +
+    "-" +
+    String(maintenant.getDate()).padStart(2, "0");
+
+  const { data: competitions, error } = await supabaseClient
+    .from("competitions")
+    .select(`
+      *,
+      dates_competition (
+        date_competition
+      )
+    `)
+    .eq("fermeture_auto_active", true);
+
+  if (error) return sbErreur(error.message);
+
+  for (const competition of competitions || []) {
+    const dates = competition.dates_competition || [];
+
+    if (dates.length === 0) continue;
+
+    const datesISO = dates
+      .map(d => sbFormatDateISO(d.date_competition))
+      .sort();
+
+    const premiereDate = datesISO[0];
+    const derniereDate = datesISO[datesISO.length - 1];
+
+    if (dateAujourdHui < premiereDate || dateAujourdHui > derniereDate) {
+      continue;
+    }
+
+    const statut = sbNormaliserStatut(competition.statut);
+
+    if (
+      competition.heure_ouverture &&
+      heureActuelle >= competition.heure_ouverture &&
+      statut === "fermee"
+    ) {
+      await supabaseClient
+        .from("competitions")
+        .update({
+          statut: "Ouverte",
+          dernier_traitement_auto: dateAujourdHui
+        })
+        .eq("id", competition.id);
+
+      continue;
+    }
+
+    if (
+      competition.heure_fermeture &&
+      heureActuelle >= competition.heure_fermeture &&
+      statut === "ouverte"
+    ) {
+      await supabaseClient
+        .from("competitions")
+        .update({
+          statut: "Fermée",
+          dernier_traitement_auto: dateAujourdHui
+        })
+        .eq("id", competition.id);
+    }
+  }
+
+  return {
+    succes: true,
+    message: "Ouvertures/fermetures automatiques vérifiées."
+  };
+}
+
+async function modifierCompetitionCompleteSupabase(config, utilisateur) {
+  if (
+    !sbEstSuperAdminPseudo(utilisateur) &&
+    !(await sbUtilisateurEstOfficier(utilisateur))
+  ) {
+    return sbErreur(
+      "Accès refusé : seul un officier peut modifier une compétition."
+    );
+  }
+
+  if (
+    sbNormaliserStatut(config.statut) === "archivee" &&
+    !sbEstSuperAdminPseudo(utilisateur)
+  ) {
+    return sbErreur(
+      "Accès refusé : seul le Super Admin peut archiver une compétition."
+    );
+  }
+
+  const { error } = await supabaseClient
+    .from("competitions")
+    .update({
+      nom: config.nom,
+      statut: config.statut || "Brouillon",
+      roles_autorises: config.rolesAutorises || "",
+      description: config.description || "",
+      fermeture_auto_active: !!config.fermetureAutoActive,
+      heure_ouverture: config.heureOuvertureAuto || null,
+      heure_fermeture: config.heureFermetureAuto || null
+    })
+    .eq("id", Number(config.idCompetition));
+
+  if (error) {
+    return sbErreur(error.message);
+  }
+
+  await sbJournaliser(
+    utilisateur,
+    "Modification compétition",
+    "ID " +
+      config.idCompetition +
+      " | Nom : " +
+      config.nom +
+      " | Statut : " +
+      config.statut +
+      " | Fermeture auto : " +
+      (config.fermetureAutoActive ? "Oui" : "Non")
+  );
+
+  return {
+    succes: true,
+    message: "Compétition modifiée."
   };
 }

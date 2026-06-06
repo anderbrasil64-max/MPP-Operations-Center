@@ -4,7 +4,7 @@
    Version Alpha 0.4.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.4.1 - Supabase";
+const VERSION_SITE = "Alpha 0.5.0 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -17,7 +17,8 @@ let cacheFrontend = {
 
 const DUREE_CACHE_FRONT_MS = 5 * 60 * 1000;
 
-window.onload = function () {
+window.onload = async function () {
+  await appliquerOuverturesFermeturesAutomatiquesSupabase();
   afficherConnexion();
   afficherVersionSite();
 };
@@ -628,41 +629,178 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
   const stats = calculerStatistiquesTableau(data.lignes);
   const statsParDate = calculerStatistiquesParDate(data.dates, data.lignes);
   const effectifParHoraire = calculerEffectifParHoraire(data.dates, data.lignes);
-  let html = `<div class="form-zone"><h2>${escapeHTML(nomCompetition)}</h2><div class="table-container"><table class="presence-table"><thead><tr><th>Joueur</th>`;
-  data.dates.forEach(function (date) {
-    html += `<th class="date-header" title="${escapeHTML(date.dateCompetition)}"><div class="date-jour">${escapeHTML(date.jourCourt || "")}</div><div class="date-numero">${escapeHTML(date.jourNumero || date.dateCompetition)}</div><div class="date-mois">${escapeHTML(date.moisCourt || "")}</div></th>`;
+
+  const afficherEffectifParHoraire = data.dates.some(function (date) {
+    return String(date.horaires || "")
+      .split(",")
+      .map(h => h.trim())
+      .filter(Boolean).length > 1;
   });
-  html += `<th>Synthèse</th></tr></thead><tbody>`;
+
+  let html = `
+    <div class="form-zone">
+      <h2>${escapeHTML(nomCompetition)}</h2>
+
+      <div class="stats-box">
+        <h3>Statistiques générales</h3>
+        <p>🟢 Présents : ${stats.presents}</p>
+        <p>🔵 Remplaçants : ${stats.remplacants}</p>
+        <p>🔴 Absents : ${stats.absents}</p>
+        <p>⚪ Non renseignés : ${stats.nonRenseignes}</p>
+        <p><strong>Taux de réponse : ${stats.tauxReponse}%</strong></p>
+      </div>
+  `;
+
+  if (afficherEffectifParHoraire) {
+    html += `<div class="stats-box"><h3>📊 Effectif par horaire</h3>`;
+
+    effectifParHoraire.forEach(function (dateInfo) {
+      html += `
+        <div class="horaire-date-block">
+          <h4>${escapeHTML(dateInfo.dateAffichage)}</h4>
+          <div class="table-container">
+            <table class="presence-table horaire-table">
+              <thead>
+                <tr>
+                  <th>Horaire</th>
+                  <th>🟢 Présents</th>
+                  <th>🔵 Remplaçants</th>
+                  <th>🔴 Absents</th>
+                  <th>⚪ Sans réponse</th>
+                </tr>
+              </thead>
+              <tbody>
+      `;
+
+      if (dateInfo.horaires.length === 0) {
+        html += `<tr><td colspan="5">Aucun horaire défini pour cette date.</td></tr>`;
+      }
+
+      dateInfo.horaires.forEach(function (h) {
+        html += `
+          <tr>
+            <td>${escapeHTML(h.horaire)}</td>
+            <td>${h.presents}</td>
+            <td>${h.remplacants}</td>
+            <td>${h.absents}</td>
+            <td>${h.nonRenseignes}</td>
+          </tr>
+        `;
+      });
+
+      html += `
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+  }
+
+  html += `
+    <div class="stats-box">
+      <h3>Effectif par date</h3>
+      <div class="table-container">
+        <table class="presence-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>🟢 Présents</th>
+              <th>🔵 Remplaçants</th>
+              <th>🔴 Absents</th>
+              <th>⚪ Sans réponse</th>
+            </tr>
+          </thead>
+          <tbody>
+  `;
+
+  statsParDate.forEach(function (s) {
+    html += `
+      <tr>
+        <td>${escapeHTML(s.dateAffichage)}</td>
+        <td>${s.presents}</td>
+        <td>${s.remplacants}</td>
+        <td>${s.absents}</td>
+        <td>${s.nonRenseignes}</td>
+      </tr>
+    `;
+  });
+
+  html += `
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="table-container">
+      <table class="presence-table">
+        <thead>
+          <tr>
+            <th>Joueur</th>
+  `;
+
+  data.dates.forEach(function (date) {
+    html += `
+      <th class="date-header" title="${escapeHTML(date.dateCompetition)}">
+        <div class="date-jour">${escapeHTML(date.jourCourt || "")}</div>
+        <div class="date-numero">${escapeHTML(date.jourNumero || date.dateCompetition)}</div>
+        <div class="date-mois">${escapeHTML(date.moisCourt || "")}</div>
+      </th>
+    `;
+  });
+
+  html += `
+            <th>Synthèse</th>
+          </tr>
+        </thead>
+        <tbody>
+  `;
+
   data.lignes.forEach(function (ligne) {
     html += `<tr><td>${escapeHTML(ligne.pseudo)}</td>`;
+
     ligne.disponibilites.forEach(function (dispo) {
-      html += `<td onclick='afficherDetailPresence(${JSON.stringify(JSON.stringify(ligne.pseudo))}, ${JSON.stringify(JSON.stringify(dispo))})'>${formaterAffichagePresence(dispo)}</td>`;
+      html += `
+        <td onclick='afficherDetailPresence(${JSON.stringify(JSON.stringify(ligne.pseudo))}, ${JSON.stringify(JSON.stringify(dispo))})'>
+          ${formaterAffichagePresence(dispo)}
+        </td>
+      `;
     });
+
     html += `<td>${escapeHTML(ligne.synthese)}</td></tr>`;
   });
-  html += `</tbody></table></div>`;
-  html += `<div class="stats-box"><h3>Statistiques générales</h3><p>🟢 Présents : ${stats.presents}</p><p>🔵 Remplaçants : ${stats.remplacants}</p><p>🔴 Absents : ${stats.absents}</p><p>⚪ Non renseignés : ${stats.nonRenseignes}</p><p><strong>Taux de réponse : ${stats.tauxReponse}%</strong></p></div>`;
-  html += `<div class="stats-box"><h3>Effectif par date</h3><div class="table-container"><table class="presence-table"><thead><tr><th>Date</th><th>🟢 Présents</th><th>🔵 Remplaçants</th><th>🔴 Absents</th><th>⚪ Sans réponse</th></tr></thead><tbody>`;
-  statsParDate.forEach(function (s) { html += `<tr><td>${escapeHTML(s.dateAffichage)}</td><td>${s.presents}</td><td>${s.remplacants}</td><td>${s.absents}</td><td>${s.nonRenseignes}</td></tr>`; });
-  html += `</tbody></table></div></div>`;
-  html += `<div class="stats-box"><h3>📊 Effectif par horaire</h3>`;
-  effectifParHoraire.forEach(function (dateInfo) {
-    html += `<div class="horaire-date-block"><h4>${escapeHTML(dateInfo.dateAffichage)}</h4><div class="table-container"><table class="presence-table horaire-table"><thead><tr><th>Horaire</th><th>🟢 Présents</th><th>🔵 Remplaçants</th><th>🔴 Absents</th><th>⚪ Sans réponse</th></tr></thead><tbody>`;
-    if (dateInfo.horaires.length === 0) html += `<tr><td colspan="5">Aucun horaire défini pour cette date.</td></tr>`;
-    dateInfo.horaires.forEach(function (h) { html += `<tr><td>${escapeHTML(h.horaire)}</td><td>${h.presents}</td><td>${h.remplacants}</td><td>${h.absents}</td><td>${h.nonRenseignes}</td></tr>`; });
-    html += `</tbody></table></div></div>`;
-  });
-  html += `</div><div class="table-actions"><button onclick="exporterCSV(${idCompetition}, '${jsString(nomCompetition)}')">📥 Exporter CSV</button><button onclick="chargerSansReponse(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">Voir les sans réponse</button><button onclick="afficherSelectionCompetitionOfficier()" class="secondary-button">Retour</button></div></div>`;
+
+  html += `
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-actions">
+      <button onclick="exporterCSV(${idCompetition}, '${jsString(nomCompetition)}')">
+        📥 Exporter CSV
+      </button>
+
+      <button onclick="chargerSansReponse(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">
+        Voir les sans réponse
+      </button>
+
+      <button onclick="afficherSelectionCompetitionOfficier()" class="secondary-button">
+        Retour
+      </button>
+    </div>
+  </div>
+  `;
+
   setContenu(html);
 }
 
 function afficherGestionCompetitions() {
-
   definirModeCarte("large");
   afficherChargement("Gestion des compétitions");
 
   chargerCompetitionsAvecCache(function (data) {
-
     if (!data.succes) {
       return afficherErreur(
         data.message,
@@ -680,7 +818,6 @@ function afficherGestionCompetitions() {
     `;
 
     data.competitions.forEach(function (competition) {
-
       if (!peutVoirCompetition(competition)) {
         return;
       }
@@ -692,14 +829,17 @@ function afficherGestionCompetitions() {
           <h3>${escapeHTML(competition.nom)}</h3>
 
           <p>Statut : ${escapeHTML(competition.statut)}</p>
-
           <p>Rôles autorisés : ${escapeHTML(competition.rolesAutorises || "Tous")}</p>
-
           <p>${escapeHTML(competition.description || "")}</p>
+
+          <button
+            onclick='afficherFormulaireModificationCompetition(${JSON.stringify(JSON.stringify(competition))})'
+            class="secondary-button">
+            ✏️ Modifier
+          </button>
       `;
 
       if (statut !== "archivee" && peutModifierCompetition(competition)) {
-
         html += `
           <button
             onclick="afficherGestionDatesCompetition(${Number(competition.id)}, '${jsString(competition.nom)}')"
@@ -710,7 +850,6 @@ function afficherGestionCompetitions() {
       }
 
       if (estOfficierConnecte() || estSuperAdminConnecte()) {
-
         if (statut === "brouillon" || statut === "fermee") {
           html += `
             <button
@@ -733,7 +872,6 @@ function afficherGestionCompetitions() {
       }
 
       if (estSuperAdminConnecte()) {
-
         if (statut !== "archivee") {
           html += `
             <button
@@ -755,9 +893,7 @@ function afficherGestionCompetitions() {
         }
       }
 
-      html += `
-        </div>
-      `;
+      html += `</div>`;
     });
 
     html += `
@@ -814,13 +950,153 @@ function changerStatutCompetition(idCompetition, nouveauStatut) {
 
 function afficherFormulaireCreationCompetition() {
   definirModeCarte("large");
+
   setContenu(`
-    <div class="form-zone"><h2>Créer une compétition</h2>
-      <div class="stats-box"><h3>1. Informations générales</h3><label for="nomCompetition">Nom de la compétition</label><input type="text" id="nomCompetition" placeholder="Ex : Campagne Juin 2026"><label for="descriptionCompetition">Description</label><input type="text" id="descriptionCompetition" placeholder="Ex : Campagne principale du clan MPP"><label>Rôles autorisés</label><div class="roles-selection">
-        <label class="checkbox-role"><input type="checkbox" id="roleOfficier" checked>Officier</label><label class="checkbox-role"><input type="checkbox" id="roleStrateur" checked>Strateur</label><label class="checkbox-role"><input type="checkbox" id="roleSoldat" checked>Soldat</label><label class="checkbox-role"><input type="checkbox" id="roleReserviste">Réserviste</label><label class="checkbox-role"><input type="checkbox" id="roleRecrue">Recrue</label></div><label for="statutCompetition">Statut initial</label><select id="statutCompetition"><option value="Brouillon">Brouillon</option><option value="Ouverte">Ouverte</option><option value="Fermée">Fermée</option><option value="Archivée">Archivée</option></select></div>
-      <div class="stats-box"><h3>2. Calendrier</h3><label for="dateDebutCompetition">Date de début</label><input type="date" id="dateDebutCompetition"><label for="dateFinCompetition">Date de fin</label><input type="date" id="dateFinCompetition"><label>Jours concernés</label><div class="roles-selection"><label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="1" checked>Lundi</label><label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="2" checked>Mardi</label><label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="3" checked>Mercredi</label><label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="4" checked>Jeudi</label><label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="5" checked>Vendredi</label><label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="6">Samedi</label><label class="checkbox-role"><input type="checkbox" class="jour-checkbox" value="0">Dimanche</label></div><label for="horairesCompetition">Horaires</label><input type="text" id="horairesCompetition" value="21:00,21:15,21:30"><p>Format attendu : 21:00,21:15,21:30</p></div>
-      <button onclick="previsualiserCreationCompetition()">Prévisualiser la création</button><button onclick="afficherGestionCompetitions()" class="secondary-button">Annuler</button>
-    </div>`);
+    <div class="form-zone">
+      <h2>Créer une compétition</h2>
+
+      <div class="stats-box">
+        <h3>1. Informations générales</h3>
+
+        <label for="nomCompetition">Nom de la compétition</label>
+        <input
+          type="text"
+          id="nomCompetition"
+          placeholder="Ex : Campagne Juin 2026"
+        >
+
+        <label for="descriptionCompetition">Description</label>
+        <input
+          type="text"
+          id="descriptionCompetition"
+          placeholder="Ex : Campagne principale du clan MPP"
+        >
+
+        <label>Rôles autorisés</label>
+        <div class="roles-selection">
+          <label class="checkbox-role">
+            <input type="checkbox" id="roleOfficier" checked>
+            Officier
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" id="roleStrateur" checked>
+            Strateur
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" id="roleSoldat" checked>
+            Soldat
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" id="roleReserviste">
+            Réserviste
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" id="roleRecrue">
+            Recrue
+          </label>
+        </div>
+
+        <label for="statutCompetition">Statut initial</label>
+        <select id="statutCompetition">
+          <option value="Brouillon">Brouillon</option>
+          <option value="Ouverte">Ouverte</option>
+          <option value="Fermée">Fermée</option>
+          <option value="Archivée">Archivée</option>
+        </select>
+      </div>
+
+      <div class="stats-box">
+        <h3>2. Calendrier</h3>
+
+        <label for="dateDebutCompetition">Date de début</label>
+        <input type="date" id="dateDebutCompetition">
+
+        <label for="dateFinCompetition">Date de fin</label>
+        <input type="date" id="dateFinCompetition">
+
+        <label>Jours concernés</label>
+        <div class="roles-selection">
+          <label class="checkbox-role">
+            <input type="checkbox" class="jour-checkbox" value="1" checked>
+            Lundi
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" class="jour-checkbox" value="2" checked>
+            Mardi
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" class="jour-checkbox" value="3" checked>
+            Mercredi
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" class="jour-checkbox" value="4" checked>
+            Jeudi
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" class="jour-checkbox" value="5" checked>
+            Vendredi
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" class="jour-checkbox" value="6">
+            Samedi
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" class="jour-checkbox" value="0">
+            Dimanche
+          </label>
+        </div>
+
+        <label for="horairesCompetition">Horaires de jeu proposés</label>
+        <input
+          type="text"
+          id="horairesCompetition"
+          value="21:00,21:15,21:30"
+        >
+
+        <p>Format attendu : 21:00,21:15,21:30</p>
+      </div>
+
+      <div class="stats-box">
+        <h3>3. Ouverture / fermeture automatique</h3>
+
+        <label for="modeFermetureAuto">Mode</label>
+        <select id="modeFermetureAuto" onchange="gererAffichageFermetureAuto()">
+          <option value="non">Pas de fermeture automatique</option>
+          <option value="oui">Horaires de fermeture</option>
+        </select>
+
+        <div id="zoneFermetureAuto" style="display:none;">
+          <label for="heureOuvertureAuto">Heure d'ouverture automatique</label>
+          <input type="time" id="heureOuvertureAuto" value="08:00">
+
+          <label for="heureFermetureAuto">Heure de fermeture automatique</label>
+          <input type="time" id="heureFermetureAuto" value="20:00">
+
+          <p>
+            La règle sera active uniquement entre la première et la dernière date de la compétition.
+          </p>
+        </div>
+      </div>
+
+      <button onclick="previsualiserCreationCompetition()">
+        Prévisualiser la création
+      </button>
+
+      <button onclick="afficherGestionCompetitions()" class="secondary-button">
+        Annuler
+      </button>
+    </div>
+  `);
 }
 
 function previsualiserCreationCompetition() {
@@ -830,17 +1106,99 @@ function previsualiserCreationCompetition() {
   const dateDebut = document.getElementById("dateDebutCompetition").value;
   const dateFin = document.getElementById("dateFinCompetition").value;
   const horaires = document.getElementById("horairesCompetition").value.trim();
+
+  const modeFermetureAuto =
+    document.getElementById("modeFermetureAuto")?.value || "non";
+
+  const fermetureAutoActive =
+    modeFermetureAuto === "oui";
+
+  const heureOuvertureAuto =
+    document.getElementById("heureOuvertureAuto")?.value || "";
+
+  const heureFermetureAuto =
+    document.getElementById("heureFermetureAuto")?.value || "";
+
   const roles = recupererRolesCreationCompetition();
   const joursSelectionnes = recupererJoursSelectionnes();
-  if (!nom) return afficherMessageModal("Erreur", "Merci de saisir un nom de compétition.");
-  if (roles.length === 0) return afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle autorisé.");
-  if (!dateDebut || !dateFin) return afficherMessageModal("Erreur", "Merci de sélectionner une date de début et une date de fin.");
-  if (new Date(dateFin) < new Date(dateDebut)) return afficherMessageModal("Erreur", "La date de fin doit être après la date de début.");
-  if (joursSelectionnes.length === 0) return afficherMessageModal("Erreur", "Merci de sélectionner au moins un jour concerné.");
-  if (!horaires) return afficherMessageModal("Erreur", "Merci de saisir au moins un horaire.");
-  const datesGenerees = genererDatesDepuisPeriode(dateDebut, dateFin, joursSelectionnes);
-  if (datesGenerees.length === 0) return afficherMessageModal("Erreur", "Aucune date générée avec ces paramètres.");
-  afficherRecapCreationCompetition({ nom, description, statut, rolesAutorises: roles.join(","), dates: datesGenerees, horaires });
+
+  if (!nom) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de saisir un nom de compétition."
+    );
+  }
+
+  if (roles.length === 0) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de sélectionner au moins un rôle autorisé."
+    );
+  }
+
+  if (!dateDebut || !dateFin) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de sélectionner une date de début et une date de fin."
+    );
+  }
+
+  if (new Date(dateFin) < new Date(dateDebut)) {
+    return afficherMessageModal(
+      "Erreur",
+      "La date de fin doit être après la date de début."
+    );
+  }
+
+  if (joursSelectionnes.length === 0) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de sélectionner au moins un jour concerné."
+    );
+  }
+
+  if (!horaires) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de saisir au moins un horaire."
+    );
+  }
+
+  if (
+    fermetureAutoActive &&
+    (!heureOuvertureAuto || !heureFermetureAuto)
+  ) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de renseigner une heure d'ouverture et une heure de fermeture automatique."
+    );
+  }
+
+  const datesGenerees =
+    genererDatesDepuisPeriode(
+      dateDebut,
+      dateFin,
+      joursSelectionnes
+    );
+
+  if (datesGenerees.length === 0) {
+    return afficherMessageModal(
+      "Erreur",
+      "Aucune date générée avec ces paramètres."
+    );
+  }
+
+  afficherRecapCreationCompetition({
+    nom: nom,
+    description: description,
+    statut: statut,
+    rolesAutorises: roles.join(","),
+    dates: datesGenerees,
+    horaires: horaires,
+    fermetureAutoActive: fermetureAutoActive,
+    heureOuvertureAuto: heureOuvertureAuto,
+    heureFermetureAuto: heureFermetureAuto
+  });
 }
 
 function recupererRolesCreationCompetition() {
@@ -876,8 +1234,54 @@ function genererDatesDepuisPeriode(dateDebut, dateFin, joursSelectionnes) {
 
 function afficherRecapCreationCompetition(config) {
   definirModeCarte("large");
-  let htmlDates = config.dates.map(d => `<p>📅 ${escapeHTML(d)}</p>`).join("");
-  setContenu(`<div class="form-zone"><h2>Prévisualisation</h2><div class="stats-box"><h3>${escapeHTML(config.nom)}</h3><p>${escapeHTML(config.description)}</p><p>Statut : ${escapeHTML(config.statut)}</p><p>Rôles autorisés : ${escapeHTML(config.rolesAutorises)}</p><p>Horaires : ${escapeHTML(config.horaires)}</p><p>Nombre de dates générées : ${config.dates.length}</p></div><div class="stats-box"><h3>Dates générées</h3>${htmlDates}</div><button onclick='confirmerCreationCompetitionComplete(${JSON.stringify(JSON.stringify(config))})'>Confirmer la création</button><button onclick="afficherFormulaireCreationCompetition()" class="secondary-button">Modifier</button></div>`);
+
+  const htmlDates = config.dates
+    .map(function(date) {
+      return `<p>📅 ${escapeHTML(date)}</p>`;
+    })
+    .join("");
+
+  const texteFermetureAuto = config.fermetureAutoActive
+    ? "Oui — ouverture " +
+      escapeHTML(config.heureOuvertureAuto) +
+      " / fermeture " +
+      escapeHTML(config.heureFermetureAuto)
+    : "Non";
+
+  setContenu(`
+    <div class="form-zone">
+      <h2>Prévisualisation</h2>
+
+      <div class="stats-box">
+        <h3>${escapeHTML(config.nom)}</h3>
+
+        <p>${escapeHTML(config.description)}</p>
+
+        <p>Statut : ${escapeHTML(config.statut)}</p>
+
+        <p>Rôles autorisés : ${escapeHTML(config.rolesAutorises)}</p>
+
+        <p>Horaires de jeu : ${escapeHTML(config.horaires)}</p>
+
+        <p>Fermeture automatique : ${texteFermetureAuto}</p>
+
+        <p>Nombre de dates générées : ${config.dates.length}</p>
+      </div>
+
+      <div class="stats-box">
+        <h3>Dates générées</h3>
+        ${htmlDates}
+      </div>
+
+      <button onclick='confirmerCreationCompetitionComplete(${JSON.stringify(JSON.stringify(config))})'>
+        Confirmer la création
+      </button>
+
+      <button onclick="afficherFormulaireCreationCompetition()" class="secondary-button">
+        Modifier
+      </button>
+    </div>
+  `);
 }
 
 function confirmerCreationCompetitionComplete(configJSON) {
@@ -1477,4 +1881,295 @@ function changerMotDePasse() {
       message.textContent = "Erreur lors du changement de mot de passe.";
       message.style.color = "#ff5555";
     });
+}
+
+function gererAffichageFermetureAuto() {
+  const modeFermetureAuto = document.getElementById("modeFermetureAuto");
+  const zoneFermetureAuto = document.getElementById("zoneFermetureAuto");
+
+  if (!modeFermetureAuto || !zoneFermetureAuto) {
+    return;
+  }
+
+  if (modeFermetureAuto.value === "oui") {
+    zoneFermetureAuto.style.display = "";
+  } else {
+    zoneFermetureAuto.style.display = "none";
+  }
+}
+
+function afficherFormulaireModificationCompetition(competitionJSON) {
+  definirModeCarte("large");
+
+  const competition = JSON.parse(competitionJSON);
+
+  const rolesActuels = String(competition.rolesAutorises || "");
+
+  const fermetureAutoActive =
+    competition.fermetureAutoActive === true ||
+    competition.fermetureAutoActive === "true";
+
+  setContenu(`
+    <div class="form-zone">
+      <h2>Modifier une compétition</h2>
+
+      <div class="stats-box">
+        <h3>1. Informations générales</h3>
+
+        <label for="modifierNomCompetition">Nom de la compétition</label>
+        <input
+          type="text"
+          id="modifierNomCompetition"
+          value="${escapeHTML(competition.nom)}"
+        >
+
+        <label for="modifierDescriptionCompetition">Description</label>
+        <input
+          type="text"
+          id="modifierDescriptionCompetition"
+          value="${escapeHTML(competition.description || "")}"
+        >
+
+        <label>Rôles autorisés</label>
+        <div class="roles-selection">
+          <label class="checkbox-role">
+            <input type="checkbox" id="modifierRoleOfficier" ${rolesActuels.includes("Officier") ? "checked" : ""}>
+            Officier
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" id="modifierRoleStrateur" ${rolesActuels.includes("Strateur") ? "checked" : ""}>
+            Strateur
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" id="modifierRoleSoldat" ${rolesActuels.includes("Soldat") ? "checked" : ""}>
+            Soldat
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" id="modifierRoleReserviste" ${rolesActuels.includes("Réserviste") ? "checked" : ""}>
+            Réserviste
+          </label>
+
+          <label class="checkbox-role">
+            <input type="checkbox" id="modifierRoleRecrue" ${rolesActuels.includes("Recrue") ? "checked" : ""}>
+            Recrue
+          </label>
+        </div>
+
+        <label for="modifierStatutCompetition">Statut</label>
+        <select id="modifierStatutCompetition">
+          <option value="Brouillon" ${competition.statut === "Brouillon" ? "selected" : ""}>Brouillon</option>
+          <option value="Ouverte" ${competition.statut === "Ouverte" ? "selected" : ""}>Ouverte</option>
+          <option value="Fermée" ${competition.statut === "Fermée" ? "selected" : ""}>Fermée</option>
+          <option value="Archivée" ${competition.statut === "Archivée" ? "selected" : ""}>Archivée</option>
+        </select>
+      </div>
+
+      <div class="stats-box">
+        <h3>2. Dates</h3>
+        <p>
+          Les dates sont gérées séparément pour éviter de supprimer ou recréer accidentellement les présences déjà enregistrées.
+        </p>
+
+        <button
+          onclick="afficherGestionDatesCompetition(${Number(competition.id)}, '${jsString(competition.nom)}')"
+          class="secondary-button">
+          📅 Gérer les dates
+        </button>
+      </div>
+
+      <div class="stats-box">
+        <h3>3. Ouverture / fermeture automatique</h3>
+
+        <label for="modifierModeFermetureAuto">Mode</label>
+        <select id="modifierModeFermetureAuto" onchange="gererAffichageModificationFermetureAuto()">
+          <option value="non" ${!fermetureAutoActive ? "selected" : ""}>
+            Pas de fermeture automatique
+          </option>
+          <option value="oui" ${fermetureAutoActive ? "selected" : ""}>
+            Horaires de fermeture
+          </option>
+        </select>
+
+        <div id="modifierZoneFermetureAuto" style="${fermetureAutoActive ? "" : "display:none;"}">
+          <label for="modifierHeureOuvertureAuto">Heure d'ouverture automatique</label>
+          <input
+            type="time"
+            id="modifierHeureOuvertureAuto"
+            value="${escapeHTML(competition.heureOuverture || "08:00")}"
+          >
+
+          <label for="modifierHeureFermetureAuto">Heure de fermeture automatique</label>
+          <input
+            type="time"
+            id="modifierHeureFermetureAuto"
+            value="${escapeHTML(competition.heureFermeture || "20:00")}"
+          >
+
+          <p>
+            La règle sera active uniquement entre la première et la dernière date de la compétition.
+          </p>
+        </div>
+      </div>
+
+      <button onclick="previsualiserModificationCompetition(${Number(competition.id)})">
+        Prévisualiser les modifications
+      </button>
+
+      <button onclick="afficherGestionCompetitions()" class="secondary-button">
+        Annuler
+      </button>
+    </div>
+  `);
+}
+
+function gererAffichageModificationFermetureAuto() {
+  const modeFermetureAuto = document.getElementById("modifierModeFermetureAuto");
+  const zoneFermetureAuto = document.getElementById("modifierZoneFermetureAuto");
+
+  if (!modeFermetureAuto || !zoneFermetureAuto) {
+    return;
+  }
+
+  if (modeFermetureAuto.value === "oui") {
+    zoneFermetureAuto.style.display = "";
+  } else {
+    zoneFermetureAuto.style.display = "none";
+  }
+}
+
+function recupererRolesModificationCompetition() {
+  const roles = [];
+
+  if (document.getElementById("modifierRoleOfficier").checked) roles.push("Officier");
+  if (document.getElementById("modifierRoleStrateur").checked) roles.push("Strateur");
+  if (document.getElementById("modifierRoleSoldat").checked) roles.push("Soldat");
+  if (document.getElementById("modifierRoleReserviste").checked) roles.push("Réserviste");
+  if (document.getElementById("modifierRoleRecrue").checked) roles.push("Recrue");
+
+  return roles;
+}
+
+function previsualiserModificationCompetition(idCompetition) {
+  const nom = document.getElementById("modifierNomCompetition").value.trim();
+  const description = document.getElementById("modifierDescriptionCompetition").value.trim();
+  const statut = document.getElementById("modifierStatutCompetition").value;
+
+  const modeFermetureAuto =
+    document.getElementById("modifierModeFermetureAuto")?.value || "non";
+
+  const fermetureAutoActive =
+    modeFermetureAuto === "oui";
+
+  const heureOuvertureAuto =
+    document.getElementById("modifierHeureOuvertureAuto")?.value || "";
+
+  const heureFermetureAuto =
+    document.getElementById("modifierHeureFermetureAuto")?.value || "";
+
+  const roles = recupererRolesModificationCompetition();
+
+  if (!nom) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de saisir un nom de compétition."
+    );
+  }
+
+  if (roles.length === 0) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de sélectionner au moins un rôle autorisé."
+    );
+  }
+
+  if (
+    fermetureAutoActive &&
+    (!heureOuvertureAuto || !heureFermetureAuto)
+  ) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de renseigner une heure d'ouverture et une heure de fermeture automatique."
+    );
+  }
+
+  afficherRecapModificationCompetition({
+    idCompetition: idCompetition,
+    nom: nom,
+    description: description,
+    statut: statut,
+    rolesAutorises: roles.join(","),
+    fermetureAutoActive: fermetureAutoActive,
+    heureOuvertureAuto: heureOuvertureAuto,
+    heureFermetureAuto: heureFermetureAuto
+  });
+}
+
+function afficherRecapModificationCompetition(config) {
+  definirModeCarte("large");
+
+  const texteFermetureAuto = config.fermetureAutoActive
+    ? "Oui — ouverture " +
+      escapeHTML(config.heureOuvertureAuto) +
+      " / fermeture " +
+      escapeHTML(config.heureFermetureAuto)
+    : "Non";
+
+  setContenu(`
+    <div class="form-zone">
+      <h2>Prévisualisation des modifications</h2>
+
+      <div class="stats-box">
+        <h3>${escapeHTML(config.nom)}</h3>
+
+        <p>${escapeHTML(config.description)}</p>
+
+        <p>Statut : ${escapeHTML(config.statut)}</p>
+
+        <p>Rôles autorisés : ${escapeHTML(config.rolesAutorises)}</p>
+
+        <p>Fermeture automatique : ${texteFermetureAuto}</p>
+      </div>
+
+      <button onclick='confirmerModificationCompetition(${JSON.stringify(JSON.stringify(config))})'>
+        Confirmer les modifications
+      </button>
+
+      <button onclick="afficherGestionCompetitions()" class="secondary-button">
+        Annuler
+      </button>
+    </div>
+  `);
+}
+
+function confirmerModificationCompetition(configJSON) {
+  const config = JSON.parse(configJSON);
+
+  afficherChargement(
+    "Modification en cours...",
+    "La compétition est mise à jour."
+  );
+
+  appelAPI(
+    "modifierCompetitionComplete",
+    {
+      config: JSON.stringify(config),
+      utilisateur: utilisateurConnecte.joueur.pseudo
+    },
+    function(data) {
+      if (!data.succes) {
+        return afficherMessageModal("Erreur", data.message);
+      }
+
+      viderCacheFrontend();
+
+      afficherMessageModal(
+        "Compétition modifiée",
+        "La compétition a bien été mise à jour.",
+        afficherGestionCompetitions
+      );
+    }
+  );
 }
