@@ -343,15 +343,32 @@ async function chargerJoueursSupabase() {
 }
 
 async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur) {
-  if (!sbEstSuperAdminPseudo(utilisateur) && !(await sbUtilisateurEstOfficier(utilisateur))) {
-    return sbErreur("Accès refusé : seul un officier peut ajouter un joueur.");
+
+  if (
+    !sbEstSuperAdminPseudo(utilisateur) &&
+    !(await sbUtilisateurEstOfficier(utilisateur))
+  ) {
+    return sbErreur(
+      "Accès refusé : seul un officier peut ajouter un joueur."
+    );
+  }
+
+  const rolesDemandes = sbTexte(roles);
+
+  if (
+    rolesDemandes.toLowerCase().includes("superadmin") &&
+    !sbEstSuperAdminPseudo(utilisateur)
+  ) {
+    return sbErreur(
+      "Accès refusé : seul un Super Admin peut attribuer le rôle SuperAdmin."
+    );
   }
 
   const { data, error } = await supabaseClient
     .from("joueurs")
     .insert([{
       pseudo: sbTexte(pseudo),
-      roles: sbTexte(roles) || "Soldat",
+      roles: rolesDemandes || "Soldat",
       statut: sbTexte(statut) || "Actif"
     }])
     .select()
@@ -359,7 +376,11 @@ async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur) {
 
   if (error) return sbErreur(error.message);
 
-  await sbJournaliser(utilisateur, "Ajout joueur", "Pseudo : " + pseudo + " | Rôles : " + roles);
+  await sbJournaliser(
+    utilisateur,
+    "Ajout joueur",
+    "Pseudo : " + pseudo + " | Rôles : " + rolesDemandes
+  );
 
   return {
     succes: true,
@@ -368,16 +389,39 @@ async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur) {
   };
 }
 
-async function modifierJoueurSupabase(idJoueur, pseudo, roles, statut, utilisateur) {
-  if (!sbEstSuperAdminPseudo(utilisateur) && !(await sbUtilisateurEstOfficier(utilisateur))) {
-    return sbErreur("Accès refusé : seul un officier peut modifier un joueur.");
+async function modifierJoueurSupabase(
+  idJoueur,
+  pseudo,
+  roles,
+  statut,
+  utilisateur
+) {
+
+  if (
+    !sbEstSuperAdminPseudo(utilisateur) &&
+    !(await sbUtilisateurEstOfficier(utilisateur))
+  ) {
+    return sbErreur(
+      "Accès refusé : seul un officier peut modifier un joueur."
+    );
+  }
+
+  const rolesDemandes = sbTexte(roles);
+
+  if (
+    rolesDemandes.toLowerCase().includes("superadmin") &&
+    !sbEstSuperAdminPseudo(utilisateur)
+  ) {
+    return sbErreur(
+      "Accès refusé : seul un Super Admin peut attribuer le rôle SuperAdmin."
+    );
   }
 
   const { error } = await supabaseClient
     .from("joueurs")
     .update({
       pseudo: sbTexte(pseudo),
-      roles: sbTexte(roles),
+      roles: rolesDemandes,
       statut: sbTexte(statut),
       derniere_modification: new Date().toISOString()
     })
@@ -385,7 +429,11 @@ async function modifierJoueurSupabase(idJoueur, pseudo, roles, statut, utilisate
 
   if (error) return sbErreur(error.message);
 
-  await sbJournaliser(utilisateur, "Modification joueur", "ID " + idJoueur + " | Nouveau pseudo : " + pseudo);
+  await sbJournaliser(
+    utilisateur,
+    "Modification joueur",
+    "ID " + idJoueur + " | Nouveau pseudo : " + pseudo
+  );
 
   return {
     succes: true,
@@ -928,13 +976,11 @@ async function chargerJournalActiviteSupabase() {
   };
 }
 
-async function verifierMotDePasseSupabase(type, mdp) {
-  const typeRecherche = String(type || "").trim().toUpperCase();
-
+async function verifierMotDePasseSupabase(pseudo, mdp) {
   const { data, error } = await supabaseClient
-    .from("securite")
-    .select("mdp_officier, mdp_superadmin")
-    .eq("id", 1)
+    .from("joueurs")
+    .select("pseudo, roles, statut, mot_de_passe")
+    .ilike("pseudo", sbTexte(pseudo))
     .limit(1);
 
   if (error) {
@@ -947,18 +993,29 @@ async function verifierMotDePasseSupabase(type, mdp) {
   if (!data || data.length === 0) {
     return {
       succes: false,
-      message: "Configuration sécurité introuvable."
+      message: "Joueur introuvable."
     };
   }
 
-  const securite = data[0];
+  const joueur = data[0];
 
-  let motDePasseAttendu = "";
+  if (sbCle(joueur.statut) !== "actif") {
+    return {
+      succes: false,
+      message: "Ce compte n'est pas actif."
+    };
+  }
 
-  if (typeRecherche === "SUPERADMIN") {
-    motDePasseAttendu = securite.mdp_superadmin;
-  } else {
-    motDePasseAttendu = securite.mdp_officier;
+  const roles = sbRolesArray(joueur.roles);
+
+  let motDePasseAttendu = joueur.mot_de_passe;
+
+  if (!motDePasseAttendu) {
+    if (roles.includes("superadmin")) {
+      motDePasseAttendu = "superAD";
+    } else if (roles.includes("officier")) {
+      motDePasseAttendu = "offMPP";
+    }
   }
 
   if (String(mdp) !== String(motDePasseAttendu)) {
@@ -973,3 +1030,9 @@ async function verifierMotDePasseSupabase(type, mdp) {
     message: "Mot de passe validé."
   };
 }
+
+async function changerMotDePasseSupabase(
+  pseudo,
+  ancienMdp,
+  nouveauMdp
+)

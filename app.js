@@ -137,6 +137,10 @@ function afficherChoixOfficier() {
       <p>Que souhaites-tu faire ?</p>
       <button onclick="afficherCompetitionsJoueur()">Remplir mes présences</button>
       <button onclick="afficherEspaceOfficier()" class="secondary-button">Accéder à l’espace officier</button>
+	  <button onclick="afficherChangerMotDePasse()"
+class="secondary-button">
+🔑 Changer mon mot de passe
+</button>
       <p class="small-link" onclick="deconnexion()">Déconnexion</p>
     </div>
   `);
@@ -425,74 +429,30 @@ function verifierAccesOfficier() {
     message.style.color = "#CFCFCF";
   }
 
-  const action = estSuperAdminConnecte()
-    ? "verifierMotDePasseSuperAdmin"
-    : "verifierMotDePasseOfficier";
+  verifierMotDePasseSupabase(
+    utilisateurConnecte.joueur.pseudo,
+    motDePasse
+  )
+    .then(function (data) {
+      if (!data.succes) {
+        if (message) {
+          message.textContent = data.message;
+          message.style.color = "#ff5555";
+        }
+        return;
+      }
 
-  verifierMotDePasseAppsScript(action, {
-    pseudo: utilisateurConnecte.joueur.pseudo,
-    motDePasse: motDePasse
-  }).then(function (reponse) {
-    if (!reponse.succes) {
+      accesOfficierValide = true;
+      afficherChoixOfficier();
+    })
+    .catch(function (erreur) {
       if (message) {
-        message.textContent = reponse.message || "Mot de passe incorrect.";
+        message.textContent = "Impossible de vérifier le mot de passe.";
         message.style.color = "#ff5555";
       }
-      return;
-    }
 
-    accesOfficierValide = true;
-    afficherChoixOfficier();
-  }).catch(function (erreur) {
-    if (message) {
-      message.textContent = "Impossible de vérifier le mot de passe.";
-      message.style.color = "#ff5555";
-    }
-    console.error("Erreur vérification mot de passe", erreur);
-  });
-}
-
-function verifierMotDePasseAppsScript(action, parametres) {
-  const PASSWORD_API_URL = "https://script.google.com/macros/s/AKfycbx2_I5oyldxQdxRneO-s1m2WoCZmifII1DiJqeLpBZ0S0SRj8RC2PFq-aw-V9EjLU_jeA/exec";
-
-  return new Promise(function (resolve, reject) {
-    const nomCallback = "callback_mdp_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
-    const script = document.createElement("script");
-    let timeout;
-
-    window[nomCallback] = function (reponse) {
-      clearTimeout(timeout);
-      delete window[nomCallback];
-      if (script.parentNode) script.parentNode.removeChild(script);
-      resolve(reponse);
-    };
-
-    let url = PASSWORD_API_URL + "?action=" + encodeURIComponent(action);
-
-    Object.keys(parametres || {}).forEach(function (cle) {
-      url += "&" + encodeURIComponent(cle) + "=" + encodeURIComponent(parametres[cle]);
+      console.error("Erreur vérification mot de passe", erreur);
     });
-
-    url += "&callback=" + encodeURIComponent(nomCallback);
-    url += "&t=" + Date.now();
-
-    script.src = url;
-
-    script.onerror = function () {
-      clearTimeout(timeout);
-      delete window[nomCallback];
-      if (script.parentNode) script.parentNode.removeChild(script);
-      reject(new Error("Erreur de connexion à l'API mot de passe."));
-    };
-
-    timeout = setTimeout(function () {
-      delete window[nomCallback];
-      if (script.parentNode) script.parentNode.removeChild(script);
-      reject(new Error("Temps d'attente dépassé."));
-    }, 15000);
-
-    document.body.appendChild(script);
-  });
 }
 
 function afficherEspaceOfficier() {
@@ -981,16 +941,58 @@ function afficherGestionJoueurs() {
 
 function afficherFormulaireAjoutJoueur() {
   definirModeCarte("large");
-  setContenu(`<div class="form-zone"><h2>Ajouter un joueur</h2><label for="nouveauPseudoJoueur">Pseudo WoT</label><input type="text" id="nouveauPseudoJoueur" placeholder="Ex : NouveauJoueur"><label>Rôles</label><div class="roles-selection"><label class="checkbox-role"><input type="checkbox" id="joueurRoleOfficier">Officier</label><label class="checkbox-role"><input type="checkbox" id="joueurRoleStrateur">Strateur</label><label class="checkbox-role"><input type="checkbox" id="joueurRoleSoldat" checked>Soldat</label><label class="checkbox-role"><input type="checkbox" id="joueurRoleReserviste">Réserviste</label><label class="checkbox-role"><input type="checkbox" id="joueurRoleRecrue">Recrue</label></div><label for="nouveauStatutJoueur">Statut</label><select id="nouveauStatutJoueur"><option value="Actif">Actif</option><option value="Inactif">Inactif</option><option value="Suspendu">Suspendu</option></select><button onclick="ajouterJoueurDepuisSite()">Créer le joueur</button><button onclick="afficherGestionJoueurs()" class="secondary-button">Annuler</button></div>`);
+
+  const optionSuperAdmin = estSuperAdminConnecte()
+    ? `<label class="checkbox-role"><input type="checkbox" id="joueurRoleSuperAdmin">SuperAdmin</label>`
+    : "";
+
+  setContenu(`
+    <div class="form-zone">
+      <h2>Ajouter un joueur</h2>
+
+      <label for="nouveauPseudoJoueur">Pseudo WoT</label>
+      <input type="text" id="nouveauPseudoJoueur" placeholder="Ex : NouveauJoueur">
+
+      <label>Rôles</label>
+      <div class="roles-selection">
+        ${optionSuperAdmin}
+        <label class="checkbox-role"><input type="checkbox" id="joueurRoleOfficier">Officier</label>
+        <label class="checkbox-role"><input type="checkbox" id="joueurRoleStrateur">Strateur</label>
+        <label class="checkbox-role"><input type="checkbox" id="joueurRoleSoldat" checked>Soldat</label>
+        <label class="checkbox-role"><input type="checkbox" id="joueurRoleReserviste">Réserviste</label>
+        <label class="checkbox-role"><input type="checkbox" id="joueurRoleRecrue">Recrue</label>
+      </div>
+
+      <label for="nouveauStatutJoueur">Statut</label>
+      <select id="nouveauStatutJoueur">
+        <option value="Actif">Actif</option>
+        <option value="Inactif">Inactif</option>
+        <option value="Suspendu">Suspendu</option>
+      </select>
+
+      <button onclick="ajouterJoueurDepuisSite()">Créer le joueur</button>
+      <button onclick="afficherGestionJoueurs()" class="secondary-button">Annuler</button>
+    </div>
+  `);
 }
 
 function recupererRolesJoueur(prefixe) {
   const roles = [];
+
+  if (
+    estSuperAdminConnecte() &&
+    document.getElementById(prefixe + "RoleSuperAdmin") &&
+    document.getElementById(prefixe + "RoleSuperAdmin").checked
+  ) {
+    roles.push("SuperAdmin");
+  }
+
   if (document.getElementById(prefixe + "RoleOfficier").checked) roles.push("Officier");
   if (document.getElementById(prefixe + "RoleStrateur").checked) roles.push("Strateur");
   if (document.getElementById(prefixe + "RoleSoldat").checked) roles.push("Soldat");
   if (document.getElementById(prefixe + "RoleReserviste").checked) roles.push("Réserviste");
   if (document.getElementById(prefixe + "RoleRecrue").checked) roles.push("Recrue");
+
   return roles;
 }
 
@@ -1009,8 +1011,79 @@ function ajouterJoueurDepuisSite() {
 
 function afficherFormulaireModificationJoueur(joueur) {
   definirModeCarte("large");
+
   const rolesActuels = String(joueur.roles || "");
-  setContenu(`<div class="form-zone"><h2>Modifier un joueur</h2><label for="modifierPseudoJoueur">Pseudo WoT</label><input type="text" id="modifierPseudoJoueur" value="${escapeHTML(joueur.pseudo)}"><label>Rôles</label><div class="roles-selection"><label class="checkbox-role"><input type="checkbox" id="modifierRoleOfficier" ${rolesActuels.includes("Officier") ? "checked" : ""}>Officier</label><label class="checkbox-role"><input type="checkbox" id="modifierRoleStrateur" ${rolesActuels.includes("Strateur") ? "checked" : ""}>Strateur</label><label class="checkbox-role"><input type="checkbox" id="modifierRoleSoldat" ${rolesActuels.includes("Soldat") ? "checked" : ""}>Soldat</label><label class="checkbox-role"><input type="checkbox" id="modifierRoleReserviste" ${rolesActuels.includes("Réserviste") ? "checked" : ""}>Réserviste</label><label class="checkbox-role"><input type="checkbox" id="modifierRoleRecrue" ${rolesActuels.includes("Recrue") ? "checked" : ""}>Recrue</label></div><label for="modifierStatutJoueur">Statut</label><select id="modifierStatutJoueur"><option value="Actif" ${joueur.statut === "Actif" ? "selected" : ""}>Actif</option><option value="Inactif" ${joueur.statut === "Inactif" ? "selected" : ""}>Inactif</option><option value="Suspendu" ${joueur.statut === "Suspendu" ? "selected" : ""}>Suspendu</option></select><button onclick="modifierJoueurDepuisSite(${Number(joueur.id)})">Enregistrer les modifications</button><button onclick="afficherGestionJoueurs()" class="secondary-button">Annuler</button></div>`);
+
+  const optionSuperAdmin = estSuperAdminConnecte()
+    ? `
+      <label class="checkbox-role">
+        <input
+          type="checkbox"
+          id="modifierRoleSuperAdmin"
+          ${rolesActuels.includes("SuperAdmin") ? "checked" : ""}
+        >
+        SuperAdmin
+      </label>
+    `
+    : "";
+
+  setContenu(`
+    <div class="form-zone">
+      <h2>Modifier un joueur</h2>
+
+      <label for="modifierPseudoJoueur">Pseudo WoT</label>
+      <input
+        type="text"
+        id="modifierPseudoJoueur"
+        value="${escapeHTML(joueur.pseudo)}"
+      >
+
+      <label>Rôles</label>
+      <div class="roles-selection">
+        ${optionSuperAdmin}
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="modifierRoleOfficier" ${rolesActuels.includes("Officier") ? "checked" : ""}>
+          Officier
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="modifierRoleStrateur" ${rolesActuels.includes("Strateur") ? "checked" : ""}>
+          Strateur
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="modifierRoleSoldat" ${rolesActuels.includes("Soldat") ? "checked" : ""}>
+          Soldat
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="modifierRoleReserviste" ${rolesActuels.includes("Réserviste") ? "checked" : ""}>
+          Réserviste
+        </label>
+
+        <label class="checkbox-role">
+          <input type="checkbox" id="modifierRoleRecrue" ${rolesActuels.includes("Recrue") ? "checked" : ""}>
+          Recrue
+        </label>
+      </div>
+
+      <label for="modifierStatutJoueur">Statut</label>
+      <select id="modifierStatutJoueur">
+        <option value="Actif" ${joueur.statut === "Actif" ? "selected" : ""}>Actif</option>
+        <option value="Inactif" ${joueur.statut === "Inactif" ? "selected" : ""}>Inactif</option>
+        <option value="Suspendu" ${joueur.statut === "Suspendu" ? "selected" : ""}>Suspendu</option>
+      </select>
+
+      <button onclick="modifierJoueurDepuisSite(${Number(joueur.id)})">
+        Enregistrer les modifications
+      </button>
+
+      <button onclick="afficherGestionJoueurs()" class="secondary-button">
+        Annuler
+      </button>
+    </div>
+  `);
 }
 
 function modifierJoueurDepuisSite(idJoueur) {
@@ -1229,7 +1302,7 @@ function estOfficierConnecte() {
 }
 
 function estSuperAdminConnecte() {
-  return utilisateurConnecte?.joueur?.pseudo?.toLowerCase() === "raiju153";
+  return getRolesUtilisateur().includes("superadmin");
 }
 
 function peutVoirCompetition(competition) {
@@ -1310,6 +1383,36 @@ function afficherDemandeMotDePasseOfficier() {
       </button>
 
       <p id="message"></p>
+    </div>
+  `);
+}
+
+function afficherChangerMotDePasse() {
+
+  setContenu(`
+    <div class="form-zone">
+
+      <h2>Changer mon mot de passe</h2>
+
+      <input
+        type="password"
+        id="ancienMdp"
+        placeholder="Mot de passe actuel">
+
+      <input
+        type="password"
+        id="nouveauMdp"
+        placeholder="Nouveau mot de passe">
+
+      <input
+        type="password"
+        id="confirmationMdp"
+        placeholder="Confirmation">
+
+      <button onclick="changerMotDePasse()">
+        Enregistrer
+      </button>
+
     </div>
   `);
 }
