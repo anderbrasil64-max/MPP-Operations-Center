@@ -502,8 +502,19 @@ function afficherEspaceOfficier() {
 }
 
 function construireTableauDeBordOfficier(data) {
-
   definirModeCarte("large");
+
+  const boutonsSuperAdmin = estSuperAdminConnecte()
+    ? `
+        <button class="secondary-button" onclick="afficherGestionJoueurs()">
+          👥 Gérer les joueurs
+        </button>
+
+        <button class="secondary-button" onclick="afficherJournalActivite()">
+          📜 Journal d'activité
+        </button>
+      `
+    : "";
 
   setContenu(`
     <div class="form-zone">
@@ -515,7 +526,6 @@ function construireTableauDeBordOfficier(data) {
       </p>
 
       <div class="dashboard-grid">
-
         <div class="dashboard-card">
           <h3>👥 Joueurs</h3>
           <p>Total : ${data.joueurs.total}</p>
@@ -539,7 +549,6 @@ function construireTableauDeBordOfficier(data) {
           <p>🔒 Fermées : ${data.competitions.fermees}</p>
           <p>📦 Archivées : ${data.competitions.archivees}</p>
         </div>
-
       </div>
 
       <div class="table-actions">
@@ -551,13 +560,7 @@ function construireTableauDeBordOfficier(data) {
           📅 Gérer les compétitions
         </button>
 
-        <button class="secondary-button" onclick="afficherGestionJoueurs()">
-          👥 Gérer les joueurs
-        </button>
-
-        <button class="secondary-button" onclick="afficherJournalActivite()">
-          📜 Journal d'activité
-        </button>
+        ${boutonsSuperAdmin}
       </div>
 
       <button onclick="afficherChoixOfficier()" class="secondary-button">
