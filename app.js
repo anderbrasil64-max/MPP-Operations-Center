@@ -4,7 +4,7 @@
    Version Alpha 0.4.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.4.0 - Supabase";
+const VERSION_SITE = "Alpha 0.4.1 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -90,7 +90,7 @@ function afficherConnexion() {
   `);
 }
 
-function connexion() {
+async function connexion() {
   const pseudo = document.getElementById("pseudo").value.trim();
   const message = document.getElementById("message");
 
@@ -103,7 +103,9 @@ function connexion() {
   message.textContent = "Connexion en cours...";
   message.style.color = "#CFCFCF";
 
-  identifierUtilisateurSupabase(pseudo).then(function (data) {
+  try {
+    const data = await identifierUtilisateurSupabase(pseudo);
+
     if (!data.succes) {
       message.textContent = data.message;
       message.style.color = "#ff5555";
@@ -113,12 +115,18 @@ function connexion() {
     utilisateurConnecte = data;
     accesOfficierValide = false;
 
-    if (data.type === "officier") {
+    if (estOfficierConnecte() || estSuperAdminConnecte()) {
       afficherDemandeMotDePasseOfficier();
     } else {
       afficherCompetitionsJoueur();
     }
-  });
+
+  } catch (erreur) {
+    console.error("Erreur connexion :", erreur);
+
+    message.textContent = "Erreur lors de la connexion.";
+    message.style.color = "#ff5555";
+  }
 }
 
 
@@ -1415,4 +1423,58 @@ function afficherChangerMotDePasse() {
 
     </div>
   `);
+}
+
+function changerMotDePasse() {
+  const ancienMdp = document.getElementById("ancienMdp").value;
+  const nouveauMdp = document.getElementById("nouveauMdp").value;
+  const confirmationMdp = document.getElementById("confirmationMdp").value;
+
+  let message = document.getElementById("message");
+
+  if (!message) {
+    message = document.createElement("p");
+    message.id = "message";
+    document.querySelector(".form-zone").appendChild(message);
+  }
+
+  if (!ancienMdp || !nouveauMdp || !confirmationMdp) {
+    message.textContent = "Merci de remplir tous les champs.";
+    message.style.color = "#ff5555";
+    return;
+  }
+
+  if (nouveauMdp !== confirmationMdp) {
+    message.textContent = "Les deux nouveaux mots de passe ne correspondent pas.";
+    message.style.color = "#ff5555";
+    return;
+  }
+
+  message.textContent = "Modification en cours...";
+  message.style.color = "#CFCFCF";
+
+  changerMotDePasseSupabase(
+    utilisateurConnecte.joueur.pseudo,
+    ancienMdp,
+    nouveauMdp
+  )
+    .then(function (data) {
+      if (!data.succes) {
+        message.textContent = data.message;
+        message.style.color = "#ff5555";
+        return;
+      }
+
+      message.textContent = data.message;
+      message.style.color = "#8dff8d";
+
+      setTimeout(function () {
+        afficherChoixOfficier();
+      }, 1000);
+    })
+    .catch(function (erreur) {
+      console.error("Erreur changement mot de passe :", erreur);
+      message.textContent = "Erreur lors du changement de mot de passe.";
+      message.style.color = "#ff5555";
+    });
 }

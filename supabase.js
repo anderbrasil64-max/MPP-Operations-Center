@@ -1031,8 +1031,37 @@ async function verifierMotDePasseSupabase(pseudo, mdp) {
   };
 }
 
-async function changerMotDePasseSupabase(
-  pseudo,
-  ancienMdp,
-  nouveauMdp
-)
+async function changerMotDePasseSupabase(pseudo, ancienMdp, nouveauMdp) {
+  const verification = await verifierMotDePasseSupabase(pseudo, ancienMdp);
+
+  if (!verification.succes) {
+    return verification;
+  }
+
+  const { error } = await supabaseClient
+    .from("joueurs")
+    .update({
+      mot_de_passe: String(nouveauMdp),
+      mot_de_passe_modifie: true,
+      derniere_modification: new Date().toISOString()
+    })
+    .ilike("pseudo", sbTexte(pseudo));
+
+  if (error) {
+    return {
+      succes: false,
+      message: error.message
+    };
+  }
+
+  await sbJournaliser(
+    pseudo,
+    "Changement mot de passe",
+    "Mot de passe personnel modifié."
+  );
+
+  return {
+    succes: true,
+    message: "Mot de passe modifié avec succès."
+  };
+}
