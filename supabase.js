@@ -1122,15 +1122,21 @@ async function appliquerOuverturesFermeturesAutomatiquesSupabase() {
     `)
     .eq("fermeture_auto_active", true);
 
-  if (error) return sbErreur(error.message);
+  if (error) {
+    return sbErreur(error.message);
+  }
 
   for (const competition of competitions || []) {
     const dates = competition.dates_competition || [];
 
-    if (dates.length === 0) continue;
+    if (dates.length === 0) {
+      continue;
+    }
 
     const datesISO = dates
-      .map(d => sbFormatDateISO(d.date_competition))
+      .map(function (date) {
+        return sbFormatDateISO(date.date_competition);
+      })
       .sort();
 
     const premiereDate = datesISO[0];
@@ -1140,37 +1146,48 @@ async function appliquerOuverturesFermeturesAutomatiquesSupabase() {
       continue;
     }
 
-    const statut = sbNormaliserStatut(competition.statut);
+    const heureOuverture = competition.heure_ouverture;
+    const heureFermeture = competition.heure_fermeture;
 
-    if (
-      competition.heure_ouverture &&
-      heureActuelle >= competition.heure_ouverture &&
-      statut === "fermee"
-    ) {
-      await supabaseClient
-        .from("competitions")
-        .update({
-          statut: "Ouverte",
-          dernier_traitement_auto: dateAujourdHui
-        })
-        .eq("id", competition.id);
-
+    if (!heureOuverture || !heureFermeture) {
       continue;
     }
 
-    if (
-      competition.heure_fermeture &&
-      heureActuelle >= competition.heure_fermeture &&
-      statut === "ouverte"
-    ) {
-      await supabaseClient
-        .from("competitions")
-        .update({
-          statut: "Fermée",
-          dernier_traitement_auto: dateAujourdHui
-        })
-        .eq("id", competition.id);
+    const statutActuel = sbNormaliserStatut(competition.statut);
+
+    let nouveauStatut = competition.statut;
+
+    if (heureOuverture < heureFermeture) {
+      if (heureActuelle >= heureOuverture && heureActuelle < heureFermeture) {
+        nouveauStatut = "Ouverte";
+      } else {
+        nouveauStatut = "Fermée";
+      }
+    } else {
+      if (heureActuelle >= heureOuverture || heureActuelle < heureFermeture) {
+        nouveauStatut = "Ouverte";
+      } else {
+        nouveauStatut = "Fermée";
+      }
     }
+
+    if (sbNormaliserStatut(nouveauStatut) === statutActuel) {
+      continue;
+    }
+
+    await supabaseClient
+      .from("competitions")
+      .update({
+        statut: nouveauStatut,
+        dernier_traitement_auto: dateAujourdHui
+      })
+      .eq("id", competition.id);
+
+    await sbJournaliser(
+      "Système automatique",
+      "Ouverture/Fermeture automatique",
+      "Compétition ID " + competition.id + " passée en statut : " + nouveauStatut
+    );
   }
 
   return {
