@@ -4,7 +4,7 @@
    Version Alpha 0.4.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.5.3 - Supabase";
+const VERSION_SITE = "Alpha 0.5.6 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -629,20 +629,94 @@ function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
 }
 
 function construireTableauPresencesOfficier(idCompetition, nomCompetition, data) {
-  const stats = calculerStatistiquesTableau(data.lignes);
-  const statsParDate = calculerStatistiquesParDate(data.dates, data.lignes);
-  const effectifParHoraire = calculerEffectifParHoraire(data.dates, data.lignes);
+  function convertirDateFRVersDate(dateTexte) {
+    const texte = String(dateTexte || "").trim();
 
-  const afficherEffectifParHoraire = data.dates.some(function (date) {
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(texte)) {
+      const morceaux = texte.split("/");
+      return new Date(
+        Number(morceaux[2]),
+        Number(morceaux[1]) - 1,
+        Number(morceaux[0])
+      );
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(texte)) {
+      const morceaux = texte.split("-");
+      return new Date(
+        Number(morceaux[0]),
+        Number(morceaux[1]) - 1,
+        Number(morceaux[2])
+      );
+    }
+
+    return new Date(texte);
+  }
+
+  const aujourdHui = new Date();
+  aujourdHui.setHours(0, 0, 0, 0);
+
+  const dateLimiteEffectifHoraire = new Date(aujourdHui);
+  dateLimiteEffectifHoraire.setDate(dateLimiteEffectifHoraire.getDate() + 3);
+
+  const datesVisibles = data.dates.filter(function (dateInfo) {
+    const dateCompetition = convertirDateFRVersDate(dateInfo.dateCompetition);
+    dateCompetition.setHours(0, 0, 0, 0);
+
+    return dateCompetition >= aujourdHui;
+  });
+
+  const lignesVisibles = data.lignes.map(function (ligne) {
+    return {
+      ...ligne,
+      disponibilites: ligne.disponibilites.filter(function (dispo) {
+        return datesVisibles.some(function (dateInfo) {
+          return dateInfo.dateCompetition === dispo.dateCompetition;
+        });
+      })
+    };
+  });
+
+  const nbDatesMasquees = data.dates.length - datesVisibles.length;
+
+  const stats = calculerStatistiquesTableau(lignesVisibles);
+  const statsParDate = calculerStatistiquesParDate(datesVisibles, lignesVisibles);
+  const effectifParHoraire = calculerEffectifParHoraire(datesVisibles, lignesVisibles);
+
+  const afficherEffectifParHoraire = datesVisibles.some(function (date) {
     return String(date.horaires || "")
       .split(",")
       .map(h => h.trim())
       .filter(Boolean).length > 1;
   });
 
+  const nbDatesFuturesLointaines = effectifParHoraire.filter(function (dateInfo) {
+    const dateCompetition = convertirDateFRVersDate(dateInfo.dateCompetition);
+    dateCompetition.setHours(0, 0, 0, 0);
+
+    return dateCompetition > dateLimiteEffectifHoraire;
+  }).length;
+
+  const nbDatesFuturesLointainesEffectifDate = statsParDate.filter(function (dateInfo) {
+    const dateCompetition = convertirDateFRVersDate(dateInfo.dateCompetition);
+    dateCompetition.setHours(0, 0, 0, 0);
+
+    return dateCompetition > dateLimiteEffectifHoraire;
+  }).length;
+
   let html = `
     <div class="form-zone">
       <h2>${escapeHTML(nomCompetition)}</h2>
+
+      ${
+        nbDatesMasquees > 0
+          ? `
+            <div class="recap-box">
+              <p>📂 ${nbDatesMasquees} date(s) passée(s) masquée(s) automatiquement.</p>
+            </div>
+          `
+          : ""
+      }
 
       <div class="stats-box">
         <h3>Statistiques générales</h3>
@@ -655,11 +729,32 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
   `;
 
   if (afficherEffectifParHoraire) {
-    html += `<div class="stats-box"><h3>📊 Effectif par horaire</h3>`;
+    html += `
+      <div class="stats-box">
+        <h3>📊 Effectif par horaire</h3>
+
+        ${
+          nbDatesFuturesLointaines > 0
+            ? `
+              <p>
+                Les dates à plus de 3 jours sont masquées pour garder une lecture rapide.
+              </p>
+            `
+            : ""
+        }
+    `;
 
     effectifParHoraire.forEach(function (dateInfo) {
+      const dateCompetition = convertirDateFRVersDate(dateInfo.dateCompetition);
+      dateCompetition.setHours(0, 0, 0, 0);
+
+      const estDateLointaine = dateCompetition > dateLimiteEffectifHoraire;
+
       html += `
-        <div class="horaire-date-block">
+        <div
+          class="horaire-date-block ${estDateLointaine ? "effectif-horaire-lointain" : ""}"
+          style="${estDateLointaine ? "display:none;" : ""}"
+        >
           <h4>${escapeHTML(dateInfo.dateAffichage)}</h4>
           <div class="table-container">
             <table class="presence-table horaire-table">
@@ -699,12 +794,35 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
       `;
     });
 
+    if (nbDatesFuturesLointaines > 0) {
+      html += `
+        <button
+          id="boutonAfficherAutresDatesEffectifHoraire"
+          onclick="afficherAutresDatesEffectifHoraire()"
+          class="secondary-button"
+        >
+          Afficher les autres dates (${nbDatesFuturesLointaines})
+        </button>
+      `;
+    }
+
     html += `</div>`;
   }
 
   html += `
     <div class="stats-box">
       <h3>Effectif par date</h3>
+
+      ${
+        nbDatesFuturesLointainesEffectifDate > 0
+          ? `
+            <p>
+              Les dates à plus de 3 jours sont masquées pour garder une lecture rapide.
+            </p>
+          `
+          : ""
+      }
+
       <div class="table-container">
         <table class="presence-table">
           <thead>
@@ -720,8 +838,16 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
   `;
 
   statsParDate.forEach(function (s) {
+    const dateCompetition = convertirDateFRVersDate(s.dateCompetition);
+    dateCompetition.setHours(0, 0, 0, 0);
+
+    const estDateLointaine = dateCompetition > dateLimiteEffectifHoraire;
+
     html += `
-      <tr>
+      <tr
+        class="${estDateLointaine ? "effectif-date-lointain" : ""}"
+        style="${estDateLointaine ? "display:none;" : ""}"
+      >
         <td>${escapeHTML(s.dateAffichage)}</td>
         <td>${s.presents}</td>
         <td>${s.remplacants}</td>
@@ -735,6 +861,21 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
           </tbody>
         </table>
       </div>
+  `;
+
+  if (nbDatesFuturesLointainesEffectifDate > 0) {
+    html += `
+      <button
+        id="boutonAfficherAutresDatesEffectifDate"
+        onclick="afficherAutresDatesEffectifDate()"
+        class="secondary-button"
+      >
+        Afficher les autres dates (${nbDatesFuturesLointainesEffectifDate})
+      </button>
+    `;
+  }
+
+  html += `
     </div>
 
     <div class="table-container">
@@ -744,7 +885,7 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
             <th>Joueur</th>
   `;
 
-  data.dates.forEach(function (date) {
+  datesVisibles.forEach(function (date) {
     html += `
       <th class="date-header" title="${escapeHTML(date.dateCompetition)}">
         <div class="date-jour">${escapeHTML(date.jourCourt || "")}</div>
@@ -761,7 +902,7 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
         <tbody>
   `;
 
-  data.lignes.forEach(function (ligne) {
+  lignesVisibles.forEach(function (ligne) {
     html += `<tr><td>${escapeHTML(ligne.pseudo)}</td>`;
 
     ligne.disponibilites.forEach(function (dispo) {
@@ -797,6 +938,62 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
   `;
 
   setContenu(html);
+}
+
+function afficherAutresDatesEffectifHoraire() {
+  const blocs = document.querySelectorAll(".effectif-horaire-lointain");
+  const bouton = document.getElementById("boutonAfficherAutresDatesEffectifHoraire");
+
+  let auMoinsUnBlocMasque = false;
+
+  blocs.forEach(function (bloc) {
+    if (bloc.style.display === "none") {
+      auMoinsUnBlocMasque = true;
+    }
+  });
+
+  blocs.forEach(function (bloc) {
+    bloc.style.display = auMoinsUnBlocMasque ? "" : "none";
+  });
+
+  if (bouton) {
+    bouton.textContent = auMoinsUnBlocMasque
+      ? "Masquer les autres dates"
+      : "Afficher les autres dates (" + blocs.length + ")";
+  }
+}
+
+function afficherAutresDatesEffectifDate() {
+
+  const lignes =
+    document.querySelectorAll(".effectif-date-lointain");
+
+  const bouton =
+    document.getElementById(
+      "boutonAfficherAutresDatesEffectifDate"
+    );
+
+  let auMoinsUneLigneMasquee = false;
+
+  lignes.forEach(function (ligne) {
+    if (ligne.style.display === "none") {
+      auMoinsUneLigneMasquee = true;
+    }
+  });
+
+  lignes.forEach(function (ligne) {
+    ligne.style.display =
+      auMoinsUneLigneMasquee ? "" : "none";
+  });
+
+  if (bouton) {
+    bouton.textContent =
+      auMoinsUneLigneMasquee
+        ? "Masquer les autres dates"
+        : "Afficher les autres dates (" +
+          lignes.length +
+          ")";
+  }
 }
 
 function afficherGestionCompetitions() {
@@ -1091,6 +1288,26 @@ function afficherFormulaireCreationCompetition() {
         </div>
       </div>
 
+      <div class="stats-box">
+        <h3>4. Notification Discord des présences</h3>
+
+        <label for="modeNotificationPresence">Mode</label>
+        <select id="modeNotificationPresence" onchange="gererAffichageNotificationPresence()">
+          <option value="non">Pas de notification</option>
+          <option value="oui">Notification automatique</option>
+        </select>
+
+        <div id="zoneNotificationPresence" style="display:none;">
+          <label for="heureNotificationPresence">Heure de notification</label>
+          <input type="time" id="heureNotificationPresence" value="20:00">
+
+          <p>
+            À l'heure choisie, un message sera envoyé dans le salon staff Discord avec le nombre de présents et remplaçants du jour.
+            Si plusieurs horaires existent, le détail sera précisé par horaire.
+          </p>
+        </div>
+      </div>
+
       <button onclick="previsualiserCreationCompetition()">
         Prévisualiser la création
       </button>
@@ -1121,6 +1338,15 @@ function previsualiserCreationCompetition() {
 
   const heureFermetureAuto =
     document.getElementById("heureFermetureAuto")?.value || "";
+
+  const modeNotificationPresence =
+    document.getElementById("modeNotificationPresence")?.value || "non";
+
+  const notificationPresenceActive =
+    modeNotificationPresence === "oui";
+
+  const heureNotificationPresence =
+    document.getElementById("heureNotificationPresence")?.value || "";
 
   const roles = recupererRolesCreationCompetition();
   const joursSelectionnes = recupererJoursSelectionnes();
@@ -1177,6 +1403,16 @@ function previsualiserCreationCompetition() {
     );
   }
 
+  if (
+    notificationPresenceActive &&
+    !heureNotificationPresence
+  ) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de renseigner une heure de notification des présences."
+    );
+  }
+
   const datesGenerees =
     genererDatesDepuisPeriode(
       dateDebut,
@@ -1200,7 +1436,9 @@ function previsualiserCreationCompetition() {
     horaires: horaires,
     fermetureAutoActive: fermetureAutoActive,
     heureOuvertureAuto: heureOuvertureAuto,
-    heureFermetureAuto: heureFermetureAuto
+    heureFermetureAuto: heureFermetureAuto,
+    notificationPresenceActive: notificationPresenceActive,
+    heureNotificationPresence: heureNotificationPresence
   });
 }
 
@@ -1251,6 +1489,11 @@ function afficherRecapCreationCompetition(config) {
       escapeHTML(config.heureFermetureAuto)
     : "Non";
 
+  const texteNotificationPresence = config.notificationPresenceActive
+    ? "Oui — notification à " +
+      escapeHTML(config.heureNotificationPresence)
+    : "Non";
+
   setContenu(`
     <div class="form-zone">
       <h2>Prévisualisation</h2>
@@ -1267,6 +1510,8 @@ function afficherRecapCreationCompetition(config) {
         <p>Horaires de jeu : ${escapeHTML(config.horaires)}</p>
 
         <p>Fermeture automatique : ${texteFermetureAuto}</p>
+
+        <p>Notification Discord des présences : ${texteNotificationPresence}</p>
 
         <p>Nombre de dates générées : ${config.dates.length}</p>
       </div>
@@ -2013,6 +2258,10 @@ function afficherFormulaireModificationCompetition(competitionJSON) {
     competition.fermetureAutoActive === true ||
     competition.fermetureAutoActive === "true";
 
+  const notificationPresenceActive =
+    competition.notificationPresenceActive === true ||
+    competition.notificationPresenceActive === "true";
+
   setContenu(`
     <div class="form-zone">
       <h2>Modifier une compétition</h2>
@@ -2118,6 +2367,34 @@ function afficherFormulaireModificationCompetition(competitionJSON) {
         </div>
       </div>
 
+      <div class="stats-box">
+        <h3>4. Notification Discord des présences</h3>
+
+        <label for="modifierModeNotificationPresence">Mode</label>
+        <select id="modifierModeNotificationPresence" onchange="gererAffichageModificationNotificationPresence()">
+          <option value="non" ${!notificationPresenceActive ? "selected" : ""}>
+            Pas de notification
+          </option>
+          <option value="oui" ${notificationPresenceActive ? "selected" : ""}>
+            Notification automatique
+          </option>
+        </select>
+
+        <div id="modifierZoneNotificationPresence" style="${notificationPresenceActive ? "" : "display:none;"}">
+          <label for="modifierHeureNotificationPresence">Heure de notification</label>
+          <input
+            type="time"
+            id="modifierHeureNotificationPresence"
+            value="${escapeHTML(competition.heureNotificationPresence || "20:00")}"
+          >
+
+          <p>
+            À l'heure choisie, un message sera envoyé dans le salon staff Discord avec le nombre de présents et remplaçants du jour.
+            Si plusieurs horaires existent, le détail sera précisé par horaire.
+          </p>
+        </div>
+      </div>
+
       <button onclick="previsualiserModificationCompetition(${Number(competition.id)})">
         Prévisualiser les modifications
       </button>
@@ -2173,6 +2450,15 @@ function previsualiserModificationCompetition(idCompetition) {
   const heureFermetureAuto =
     document.getElementById("modifierHeureFermetureAuto")?.value || "";
 
+  const modeNotificationPresence =
+    document.getElementById("modifierModeNotificationPresence")?.value || "non";
+
+  const notificationPresenceActive =
+    modeNotificationPresence === "oui";
+
+  const heureNotificationPresence =
+    document.getElementById("modifierHeureNotificationPresence")?.value || "";
+
   const roles = recupererRolesModificationCompetition();
 
   if (!nom) {
@@ -2199,6 +2485,16 @@ function previsualiserModificationCompetition(idCompetition) {
     );
   }
 
+  if (
+    notificationPresenceActive &&
+    !heureNotificationPresence
+  ) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de renseigner une heure de notification des présences."
+    );
+  }
+
   afficherRecapModificationCompetition({
     idCompetition: idCompetition,
     nom: nom,
@@ -2207,7 +2503,9 @@ function previsualiserModificationCompetition(idCompetition) {
     rolesAutorises: roles.join(","),
     fermetureAutoActive: fermetureAutoActive,
     heureOuvertureAuto: heureOuvertureAuto,
-    heureFermetureAuto: heureFermetureAuto
+    heureFermetureAuto: heureFermetureAuto,
+    notificationPresenceActive: notificationPresenceActive,
+    heureNotificationPresence: heureNotificationPresence
   });
 }
 
@@ -2219,6 +2517,11 @@ function afficherRecapModificationCompetition(config) {
       escapeHTML(config.heureOuvertureAuto) +
       " / fermeture " +
       escapeHTML(config.heureFermetureAuto)
+    : "Non";
+
+  const texteNotificationPresence = config.notificationPresenceActive
+    ? "Oui — notification à " +
+      escapeHTML(config.heureNotificationPresence)
     : "Non";
 
   setContenu(`
@@ -2235,6 +2538,8 @@ function afficherRecapModificationCompetition(config) {
         <p>Rôles autorisés : ${escapeHTML(config.rolesAutorises)}</p>
 
         <p>Fermeture automatique : ${texteFermetureAuto}</p>
+
+        <p>Notification Discord des présences : ${texteNotificationPresence}</p>
       </div>
 
       <button onclick='confirmerModificationCompetition(${JSON.stringify(JSON.stringify(config))})'>
@@ -2384,4 +2689,34 @@ function afficherTableauGestionJoueurs(joueurs) {
   `;
 
   zone.innerHTML = html;
+}
+
+function gererAffichageNotificationPresence() {
+  const modeNotificationPresence = document.getElementById("modeNotificationPresence");
+  const zoneNotificationPresence = document.getElementById("zoneNotificationPresence");
+
+  if (!modeNotificationPresence || !zoneNotificationPresence) {
+    return;
+  }
+
+  if (modeNotificationPresence.value === "oui") {
+    zoneNotificationPresence.style.display = "";
+  } else {
+    zoneNotificationPresence.style.display = "none";
+  }
+}
+
+function gererAffichageModificationNotificationPresence() {
+  const modeNotificationPresence = document.getElementById("modifierModeNotificationPresence");
+  const zoneNotificationPresence = document.getElementById("modifierZoneNotificationPresence");
+
+  if (!modeNotificationPresence || !zoneNotificationPresence) {
+    return;
+  }
+
+  if (modeNotificationPresence.value === "oui") {
+    zoneNotificationPresence.style.display = "";
+  } else {
+    zoneNotificationPresence.style.display = "none";
+  }
 }

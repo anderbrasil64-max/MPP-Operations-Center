@@ -131,10 +131,14 @@ function sbCompetitionObj(competition) {
     creePar: competition.cree_par,
     rolesAutorises: competition.roles_autorises,
     description: competition.description,
+
     fermetureAutoActive: competition.fermeture_auto_active || false,
     heureOuverture: competition.heure_ouverture || "",
     heureFermeture: competition.heure_fermeture || "",
-    dernierTraitementAuto: competition.dernier_traitement_auto || ""
+    dernierTraitementAuto: competition.dernier_traitement_auto || "",
+
+    notificationPresenceActive: competition.notification_presence_active || false,
+    heureNotificationPresence: competition.heure_notification_presence || ""
   };
 }
 
@@ -612,9 +616,13 @@ async function creerCompetitionCompleteSupabase(config, utilisateur) {
       cree_par: utilisateur || "Inconnu",
       roles_autorises: config.rolesAutorises || "",
       description: config.description || "",
+
       fermeture_auto_active: !!config.fermetureAutoActive,
       heure_ouverture: config.heureOuvertureAuto || null,
-      heure_fermeture: config.heureFermetureAuto || null
+      heure_fermeture: config.heureFermetureAuto || null,
+
+      notification_presence_active: !!config.notificationPresenceActive,
+      heure_notification_presence: config.heureNotificationPresence || null
     }])
     .select()
     .single();
@@ -651,7 +659,9 @@ async function creerCompetitionCompleteSupabase(config, utilisateur) {
       " | Dates : " +
       lignesDates.length +
       " | Fermeture auto : " +
-      (config.fermetureAutoActive ? "Oui" : "Non")
+      (config.fermetureAutoActive ? "Oui" : "Non") +
+      " | Notification présences : " +
+      (config.notificationPresenceActive ? "Oui" : "Non")
   );
 
   return {
@@ -1222,9 +1232,13 @@ async function modifierCompetitionCompleteSupabase(config, utilisateur) {
       statut: config.statut || "Brouillon",
       roles_autorises: config.rolesAutorises || "",
       description: config.description || "",
+
       fermeture_auto_active: !!config.fermetureAutoActive,
       heure_ouverture: config.heureOuvertureAuto || null,
-      heure_fermeture: config.heureFermetureAuto || null
+      heure_fermeture: config.heureFermetureAuto || null,
+
+      notification_presence_active: !!config.notificationPresenceActive,
+      heure_notification_presence: config.heureNotificationPresence || null
     })
     .eq("id", Number(config.idCompetition));
 
@@ -1242,7 +1256,9 @@ async function modifierCompetitionCompleteSupabase(config, utilisateur) {
       " | Statut : " +
       config.statut +
       " | Fermeture auto : " +
-      (config.fermetureAutoActive ? "Oui" : "Non")
+      (config.fermetureAutoActive ? "Oui" : "Non") +
+      " | Notification présences : " +
+      (config.notificationPresenceActive ? "Oui" : "Non")
   );
 
   return {
