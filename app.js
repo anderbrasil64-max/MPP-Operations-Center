@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.6.3 - Supabase
+   Version Alpha 0.6.4 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.6.3 - Supabase";
+const VERSION_SITE = "Alpha 0.6.4 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -200,6 +200,14 @@ function afficherCompetitionsJoueur() {
 
     if (nbVisibles === 0) {
       html += `<p>Aucune compétition disponible.</p>`;
+    }
+
+    if (estOfficierConnecte() || estSuperAdminConnecte()) {
+      html += `
+        <button onclick="afficherChoixOfficier()" class="secondary-button">
+          Retour à l’accueil
+        </button>
+      `;
     }
 
     html += `<p class="small-link" onclick="deconnexion()">Déconnexion</p></div>`;
