@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.6.1 - Migration complète Supabase
+   Version Alpha 0.6.3 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -217,12 +217,6 @@ async function apiSupabase(action, parametres) {
 
     case "genererTableauPresences":
       return genererTableauPresencesSupabase(
-        parametres.idCompetition,
-        parametres.utilisateur
-      );
-
-    case "genererExportCSV":
-      return genererExportCSVSupabase(
         parametres.idCompetition,
         parametres.utilisateur
       );
@@ -1013,30 +1007,6 @@ async function genererTableauPresencesSupabase(idCompetition, utilisateur) {
     lignes: lignes,
     presencesOrphelines: presencesOrphelines,
     nbPresencesChargees: presences.length
-  };
-}
-
-async function genererExportCSVSupabase(idCompetition, utilisateur) {
-  const resultat = await genererTableauPresencesSupabase(idCompetition, utilisateur);
-  if (!resultat.succes) return resultat;
-
-  let csv = "Joueur;Roles;Synthese;" + resultat.dates.map(function (d) {
-    return d.dateAffichage;
-  }).join(";") + "\n";
-
-  resultat.lignes.forEach(function (ligne) {
-    const statuts = ligne.disponibilites.map(function (d) {
-      return d.statut;
-    });
-
-    csv += [ligne.pseudo, ligne.roles, ligne.synthese]
-      .concat(statuts)
-      .join(";") + "\n";
-  });
-
-  return {
-    succes: true,
-    csv: csv
   };
 }
 

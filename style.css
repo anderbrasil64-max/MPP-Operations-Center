@@ -160,6 +160,60 @@ button:disabled {
   margin-bottom: 20px;
 }
 
+.competition-card-header {
+  margin-bottom: 10px;
+}
+
+.competition-card-header h3 {
+  margin: 0 0 8px 0;
+}
+
+.competition-status-line {
+  display: flex;
+  align-items: center;
+}
+
+.competition-description {
+  color: #CFCFCF;
+  margin-top: 0;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid #4B6B3C;
+  border-radius: 999px;
+  background: #151515;
+  color: #EAEAEA;
+  font-size: 13px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.status-open {
+  border-color: #4B8F4B;
+}
+
+.status-draft {
+  border-color: #C47A28;
+}
+
+.status-closed {
+  border-color: #9E3838;
+}
+
+.status-archived {
+  border-color: #707070;
+}
+
+.table-subtitle {
+  margin-top: -5px;
+  color: #CFCFCF;
+  font-weight: bold;
+}
+
 .stats-box h3,
 .dashboard-card h3 {
   color: #FF6A00;
@@ -452,6 +506,7 @@ button:disabled {
   .modal-actions {
     flex-direction: column;
   }
+
 }
 
 .presence-cell {

@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.6.1 - Supabase
+   Version Alpha 0.6.3 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.6.1 - Supabase";
+const VERSION_SITE = "Alpha 0.6.3 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -588,12 +588,19 @@ function afficherSelectionCompetitionOfficier() {
       }
 
       nbVisibles++;
+      const descriptionCompetition = competition.description
+        ? `<p class="competition-description">${escapeHTML(competition.description)}</p>`
+        : "";
 
       html += `
         <div class="competition-card">
-          <h3>${escapeHTML(competition.nom)}</h3>
-          <p>ID : ${Number(competition.id)} | Statut : ${escapeHTML(competition.statut)}</p>
-          <p>${escapeHTML(competition.description || "")}</p>
+          <div class="competition-card-header">
+            <h3>${escapeHTML(competition.nom)}</h3>
+            <div class="competition-status-line">
+              ${badgeStatutCompetitionHTML(competition.statut)}
+            </div>
+          </div>
+          ${descriptionCompetition}
           <button onclick="afficherTableauPresencesOfficier(${Number(competition.id)}, '${jsString(competition.nom)}')">
             Voir les présences
           </button>
@@ -685,28 +692,9 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
     };
   });
 
-  const nbDatesMasquees = data.dates.length - datesVisibles.length;
-
   const stats = calculerStatistiquesTableau(lignesVisibles);
   const statsParDate = calculerStatistiquesParDate(datesVisibles, lignesVisibles);
   const effectifParHoraire = calculerEffectifParHoraire(datesVisibles, lignesVisibles);
-  const presencesOrphelines = data.presencesOrphelines || [];
-  const htmlPresencesOrphelines = presencesOrphelines.length > 0
-    ? `
-      <div class="recap-box">
-        <p><strong>⚠️ Présences non rattachées détectées : ${presencesOrphelines.length}</strong></p>
-        ${presencesOrphelines.map(function (presence) {
-          return `
-            <p>
-              - Pseudo : ${escapeHTML(presence.pseudo)}
-              | Date : ${escapeHTML(presence.dateCompetition)}
-              | Cause : ${escapeHTML(presence.cause)}
-            </p>
-          `;
-        }).join("")}
-      </div>
-    `
-    : "";
 
   const afficherEffectifParHoraire = datesVisibles.some(function (date) {
     return String(date.horaires || "")
@@ -731,30 +719,8 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
 
   let html = `
     <div class="form-zone">
-      <h2>${escapeHTML(nomCompetition)}</h2>
-      <p>Visualisation des présences — ID compétition : ${Number(idCompetition)}</p>
-
-      <div class="recap-box">
-        <p><strong>Diagnostic tableau officier</strong></p>
-        <p>ID compétition chargé : ${Number(idCompetition)}</p>
-        <p>Dates reçues : ${data.dates.length}</p>
-        <p>Joueurs / lignes reçus : ${data.lignes.length}</p>
-        <p>Présences chargées : ${Number(data.nbPresencesChargees || 0)}</p>
-        <p>Présences orphelines : ${presencesOrphelines.length}</p>
-        <p>Version site : ${escapeHTML(VERSION_SITE)}</p>
-      </div>
-
-      ${
-        nbDatesMasquees > 0
-          ? `
-            <div class="recap-box">
-              <p>📂 ${nbDatesMasquees} date(s) passée(s) masquée(s) automatiquement.</p>
-            </div>
-          `
-          : ""
-      }
-
-      ${htmlPresencesOrphelines}
+      <h2>Visualisation des présences</h2>
+      <p class="table-subtitle">${escapeHTML(nomCompetition || "Compétition")}</p>
 
       <div class="stats-box">
         <h3>Statistiques générales</h3>
@@ -770,16 +736,6 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
     html += `
       <div class="stats-box">
         <h3>📊 Effectif par horaire</h3>
-
-        ${
-          nbDatesFuturesLointaines > 0
-            ? `
-              <p>
-                Les dates à plus de 3 jours sont masquées pour garder une lecture rapide.
-              </p>
-            `
-            : ""
-        }
     `;
 
     effectifParHoraire.forEach(function (dateInfo) {
@@ -850,16 +806,6 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
   html += `
     <div class="stats-box">
       <h3>Effectif par date</h3>
-
-      ${
-        nbDatesFuturesLointainesEffectifDate > 0
-          ? `
-            <p>
-              Les dates à plus de 3 jours sont masquées pour garder une lecture rapide.
-            </p>
-          `
-          : ""
-      }
 
       <div class="table-container">
         <table class="presence-table">
@@ -960,10 +906,6 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
     </div>
 
     <div class="table-actions">
-      <button onclick="exporterCSV(${idCompetition}, '${jsString(nomCompetition)}')">
-        📥 Exporter CSV
-      </button>
-
       <button onclick="chargerSansReponse(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">
         Voir les sans réponse
       </button>
@@ -2040,21 +1982,6 @@ function afficherJournalActivite() {
   });
 }
 
-function exporterCSV(idCompetition, nomCompetition) {
-  appelAPI("genererExportCSV", { idCompetition, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
-    if (!data.succes) return alert(data.message);
-    const blob = new Blob(["\uFEFF" + data.csv], { type: "text/csv;charset=utf-8;" });
-    const lien = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    lien.href = url;
-    lien.download = "presences_" + nomCompetition.replaceAll(" ", "_").replaceAll("/", "-") + ".csv";
-    document.body.appendChild(lien);
-    lien.click();
-    document.body.removeChild(lien);
-    URL.revokeObjectURL(url);
-  });
-}
-
 function formaterAffichagePresence(dispo) {
 
   const horaires = String(dispo.horairesDisponibles || "")
@@ -2203,6 +2130,23 @@ function normaliserStatutCompetitionFrontend(statut) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function badgeStatutCompetitionHTML(statut) {
+  const statutNormalise = normaliserStatutCompetitionFrontend(statut);
+  const badges = {
+    ouverte: { classe: "status-open", texte: "🟢 Ouverte" },
+    brouillon: { classe: "status-draft", texte: "🟠 Brouillon" },
+    fermee: { classe: "status-closed", texte: "🔴 Fermée" },
+    archivee: { classe: "status-archived", texte: "⚫ Archivée" }
+  };
+
+  const badge = badges[statutNormalise] || {
+    classe: "status-unknown",
+    texte: statut || "Statut inconnu"
+  };
+
+  return `<span class="status-badge ${badge.classe}">${escapeHTML(badge.texte)}</span>`;
 }
 
 function getRolesUtilisateur() {
