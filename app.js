@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.6.5 - Supabase
+   Version Alpha 0.7.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.6.5 - Supabase";
+const VERSION_SITE = "Alpha 0.7.0 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -13,6 +13,12 @@ let cacheFrontend = {
   tableauPresences: {},
   donneesOfficierInitiales: null,
   timestamp: {}
+};
+let journalActiviteEntrees = [];
+let journalActiviteFiltres = {
+  dates: new Set(),
+  utilisateurs: new Set(),
+  actions: new Set()
 };
 
 const DUREE_CACHE_FRONT_MS = 5 * 60 * 1000;
@@ -1991,16 +1997,265 @@ function chargerSansReponse(idCompetition, nomCompetition) {
   });
 }
 
+function formaterActionJournal(action) {
+  const actionTexte = String(action || "").trim();
+  const actions = {
+    "Sauvegarde présences": "Présences mises à jour",
+    "Suppression joueur": "Joueur supprimé",
+    "Modification joueur": "Joueur modifié",
+    "Ajout joueur": "Joueur ajouté",
+    "Création compétition": "Compétition créée",
+    "Création compétition complète": "Compétition créée",
+    "Modification compétition": "Compétition modifiée",
+    "Modification statut compétition": "Statut de compétition modifié",
+    "Suppression compétition": "Compétition supprimée",
+    "Ajout date compétition": "Date ajoutée",
+    "Suppression date compétition": "Date supprimée",
+    "Ouverture/Fermeture automatique": "Statut modifié automatiquement",
+    "Notification Discord présences": "Rappel Discord envoyé",
+    "Changement mot de passe": "Mot de passe modifié"
+  };
+
+  return actions[actionTexte] || actionTexte || "-";
+}
+
+function formaterDetailsJournal(details) {
+  const detailsTexte = String(details || "").trim();
+  if (!detailsTexte) return "-";
+  return detailsTexte.replace(/\s+\|\s+/g, "\n");
+}
+
+function extraireDateJournal(dateHeure) {
+  const texte = String(dateHeure || "");
+  const correspondance = texte.match(/\b\d{2}\/\d{2}\/\d{4}\b/);
+  return correspondance ? correspondance[0] : "Date inconnue";
+}
+
+function comparerDatesJournal(a, b) {
+  if (a === "Date inconnue") return 1;
+  if (b === "Date inconnue") return -1;
+
+  const isoA = a.split("/").reverse().join("-");
+  const isoB = b.split("/").reverse().join("-");
+  return isoB.localeCompare(isoA);
+}
+
+function valeursJournal(cle) {
+  const propriete = {
+    dates: "dateFiltre",
+    utilisateurs: "utilisateur",
+    actions: "action"
+  }[cle];
+
+  const valeurs = Array.from(new Set(
+    journalActiviteEntrees.map(function (entree) {
+      return entree[propriete] || "-";
+    })
+  ));
+
+  if (cle === "dates") return valeurs.sort(comparerDatesJournal);
+  return valeurs.sort(function (a, b) {
+    return String(a).localeCompare(String(b), "fr", { sensitivity: "base" });
+  });
+}
+
+function preparerEntreesJournal(journal) {
+  return (journal || []).map(function (entree, index) {
+    const action = formaterActionJournal(entree.action);
+
+    return {
+      id: index,
+      dateHeure: entree.dateHeure || "",
+      dateFiltre: extraireDateJournal(entree.dateHeure),
+      utilisateur: entree.utilisateur || "-",
+      action: action,
+      details: formaterDetailsJournal(entree.details)
+    };
+  });
+}
+
+function initialiserFiltresJournal() {
+  journalActiviteFiltres = {
+    dates: new Set(valeursJournal("dates")),
+    utilisateurs: new Set(valeursJournal("utilisateurs")),
+    actions: new Set(valeursJournal("actions"))
+  };
+}
+
+function filtreJournalActif(cle) {
+  const valeurs = valeursJournal(cle);
+  const selection = journalActiviteFiltres[cle] || new Set();
+  return selection.size !== valeurs.length;
+}
+
+function rendreFiltreEnteteJournal(cle, titre) {
+  const valeurs = valeursJournal(cle);
+  const selection = journalActiviteFiltres[cle] || new Set();
+  const compteur = selection.size + "/" + valeurs.length;
+  const classeCompteur = filtreJournalActif(cle)
+    ? "journal-filter-count journal-filter-count-active"
+    : "journal-filter-count";
+
+  let html = `
+    <details class="journal-filter journal-header-filter">
+      <summary>
+        <span class="journal-filter-label">${escapeHTML(titre)}</span>
+        <span class="journal-filter-meta">
+          <span id="journalCompteur_${cle}" class="${classeCompteur}">${escapeHTML(compteur)}</span>
+          <span class="journal-filter-arrow">▾</span>
+        </span>
+      </summary>
+      <div class="journal-filter-panel">
+        <div class="journal-filter-actions">
+          <button type="button" onclick="selectionnerFiltreJournal('${cle}', true)">Tout sélectionner</button>
+          <button type="button" onclick="selectionnerFiltreJournal('${cle}', false)" class="secondary-button">Tout désélectionner</button>
+        </div>
+  `;
+
+  valeurs.forEach(function (valeur) {
+    html += `
+      <label class="journal-filter-option">
+        <input
+          type="checkbox"
+          data-journal-filter="${escapeHTML(cle)}"
+          value="${escapeHTML(valeur)}"
+          ${selection.has(valeur) ? "checked" : ""}
+          onchange="changerFiltreJournal('${cle}', this.value, this.checked)"
+        >
+        <span>${escapeHTML(valeur)}</span>
+      </label>
+    `;
+  });
+
+  html += `
+      </div>
+    </details>
+  `;
+
+  return html;
+}
+
+function entreeJournalVisible(entree) {
+  return journalActiviteFiltres.dates.has(entree.dateFiltre) &&
+    journalActiviteFiltres.utilisateurs.has(entree.utilisateur) &&
+    journalActiviteFiltres.actions.has(entree.action);
+}
+
+function mettreAJourCompteursFiltresJournal() {
+  ["dates", "utilisateurs", "actions"].forEach(function (cle) {
+    const compteur = document.getElementById("journalCompteur_" + cle);
+    if (!compteur) return;
+
+    compteur.textContent = journalActiviteFiltres[cle].size + "/" + valeursJournal(cle).length;
+    compteur.classList.toggle("journal-filter-count-active", filtreJournalActif(cle));
+  });
+}
+
+function rendreTableauJournal() {
+  const corpsTableau = document.getElementById("journalActiviteBody");
+  if (!corpsTableau) return;
+
+  const entreesVisibles = journalActiviteEntrees.filter(entreeJournalVisible);
+
+  if (entreesVisibles.length === 0) {
+    corpsTableau.innerHTML = `
+      <tr>
+        <td colspan="4" class="journal-empty">
+          Aucune action ne correspond aux filtres sélectionnés.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  corpsTableau.innerHTML = entreesVisibles.map(function (entree) {
+    return `
+      <tr>
+        <td class="journal-date">${escapeHTML(entree.dateHeure)}</td>
+        <td class="journal-user">${escapeHTML(entree.utilisateur)}</td>
+        <td class="journal-action">${escapeHTML(entree.action)}</td>
+        <td class="journal-details">${escapeHTML(entree.details)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function changerFiltreJournal(cle, valeur, actif) {
+  if (!journalActiviteFiltres[cle]) return;
+
+  if (actif) {
+    journalActiviteFiltres[cle].add(valeur);
+  } else {
+    journalActiviteFiltres[cle].delete(valeur);
+  }
+
+  mettreAJourCompteursFiltresJournal();
+  rendreTableauJournal();
+}
+
+function selectionnerFiltreJournal(cle, toutSelectionner) {
+  if (!journalActiviteFiltres[cle]) return;
+
+  const valeurs = valeursJournal(cle);
+  journalActiviteFiltres[cle] = toutSelectionner ? new Set(valeurs) : new Set();
+
+  document.querySelectorAll(`[data-journal-filter="${cle}"]`).forEach(function (caseFiltre) {
+    caseFiltre.checked = toutSelectionner;
+  });
+
+  mettreAJourCompteursFiltresJournal();
+  rendreTableauJournal();
+}
+
+function reinitialiserFiltresJournal() {
+  initialiserFiltresJournal();
+
+  ["dates", "utilisateurs", "actions"].forEach(function (cle) {
+    document.querySelectorAll(`[data-journal-filter="${cle}"]`).forEach(function (caseFiltre) {
+      caseFiltre.checked = true;
+    });
+  });
+
+  mettreAJourCompteursFiltresJournal();
+  rendreTableauJournal();
+}
+
 function afficherJournalActivite() {
   definirModeCarte("large");
-  afficherChargement("Journal d'activité", "Chargement des 50 dernières actions...");
+  afficherChargement("Journal d'activité", "Chargement du journal...");
   appelAPI("chargerJournalActivite", {}, function (data) {
     if (!data.succes) return afficherMessageModal("Erreur", data.message);
-    let html = `<div class="form-zone"><h2>Journal d'activité</h2><p>50 dernières actions enregistrées.</p><div class="table-container"><table class="presence-table"><thead><tr><th>Date / Heure</th><th>Utilisateur</th><th>Action</th><th>Détails</th></tr></thead><tbody>`;
-    if (data.journal.length === 0) html += `<tr><td colspan="4">Aucune action enregistrée.</td></tr>`;
-    data.journal.forEach(e => html += `<tr><td>${escapeHTML(e.dateHeure)}</td><td>${escapeHTML(e.utilisateur)}</td><td>${escapeHTML(e.action)}</td><td>${escapeHTML(e.details)}</td></tr>`);
-    html += `</tbody></table></div><button onclick="afficherEspaceOfficier()" class="secondary-button">Retour</button></div>`;
+
+    journalActiviteEntrees = preparerEntreesJournal(data.journal);
+    initialiserFiltresJournal();
+
+    let html = `
+      <div class="form-zone">
+        <h2>Journal d'activité</h2>
+        <div class="journal-toolbar">
+          <button type="button" class="secondary-button journal-reset-button" onclick="reinitialiserFiltresJournal()">
+            Réinitialiser les filtres
+          </button>
+        </div>
+        <div class="table-container journal-container">
+          <table class="presence-table journal-table">
+            <thead>
+              <tr>
+                <th class="journal-date">${rendreFiltreEnteteJournal("dates", "Date / Heure")}</th>
+                <th class="journal-user">${rendreFiltreEnteteJournal("utilisateurs", "Utilisateur")}</th>
+                <th class="journal-action">${rendreFiltreEnteteJournal("actions", "Action")}</th>
+                <th class="journal-details"><span class="journal-static-heading">Détails</span></th>
+              </tr>
+            </thead>
+            <tbody id="journalActiviteBody"></tbody>
+          </table>
+        </div>
+        <button onclick="afficherEspaceOfficier()" class="secondary-button">Retour</button>
+      </div>
+    `;
+
     setContenu(html);
+    rendreTableauJournal();
   });
 }
 

@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.6.5 - Migration complète Supabase
+   Version Alpha 0.7.0 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -14,6 +14,7 @@ const SUPABASE_URL = "https://icguokxqrnqdjafqvzyz.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Twp9mcx7CQdS_weNNUPtTQ_8V1s_Z_R";
 
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sbCacheNomsCompetitions = {};
 
 /* ==========================================================
    OUTILS GÉNÉRAUX
@@ -172,6 +173,123 @@ function sbErreur(message, details) {
     message: message || "Erreur Supabase.",
     details: details || ""
   };
+}
+
+async function sbNomCompetitionDepuisId(idCompetition) {
+  const idComp = Number(idCompetition);
+  if (!idComp) return "Compétition inconnue";
+
+  if (sbCacheNomsCompetitions[idComp]) {
+    return sbCacheNomsCompetitions[idComp];
+  }
+
+  const { data, error } = await supabaseClient
+    .from("competitions")
+    .select("nom")
+    .eq("id", idComp)
+    .limit(1);
+
+  if (error || !data || data.length === 0) {
+    return "Compétition inconnue";
+  }
+
+  sbCacheNomsCompetitions[idComp] = data[0].nom || "Compétition inconnue";
+  return sbCacheNomsCompetitions[idComp];
+}
+
+function sbStatutPresenceLisible(statut) {
+  const statutNormalise = sbNormaliserStatut(statut);
+
+  if (statutNormalise === "present") return "Présent";
+  if (statutNormalise === "absent") return "Absent";
+  if (statutNormalise === "remplacant") return "Remplaçant";
+
+  return "Non renseigné";
+}
+
+function sbPresenceEstRenseignee(statut) {
+  const statutLisible = sbStatutPresenceLisible(statut);
+  return statutLisible === "Présent" ||
+    statutLisible === "Absent" ||
+    statutLisible === "Remplaçant";
+}
+
+function sbHorairesJournal(horaires) {
+  return sbTexte(horaires)
+    .split(",")
+    .map(function (horaire) { return horaire.trim(); })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function sbLibelleChangementPresence(ancienStatut, nouveauStatut) {
+  const cle = ancienStatut + " → " + nouveauStatut;
+  const libelles = {
+    "Présent → Absent": "Désistement",
+    "Absent → Présent": "Disponibilité ajoutée",
+    "Présent → Remplaçant": "Passage en remplaçant",
+    "Remplaçant → Présent": "Passage en présent",
+    "Absent → Remplaçant": "Passage en remplaçant",
+    "Remplaçant → Absent": "Retrait de disponibilité",
+    "Non renseigné → Présent": "Présence ajoutée",
+    "Non renseigné → Absent": "Absence renseignée",
+    "Non renseigné → Remplaçant": "Remplacement proposé",
+    "Présent → Non renseigné": "Réponse supprimée",
+    "Absent → Non renseigné": "Réponse supprimée",
+    "Remplaçant → Non renseigné": "Réponse supprimée"
+  };
+
+  return libelles[cle] || "Réponse modifiée";
+}
+
+function sbActionJournalLisible(action) {
+  const actionTexte = sbTexte(action);
+  const actions = {
+    "Sauvegarde présences": "Présences mises à jour",
+    "Suppression joueur": "Joueur supprimé",
+    "Modification joueur": "Joueur modifié",
+    "Ajout joueur": "Joueur ajouté",
+    "Création compétition": "Compétition créée",
+    "Création compétition complète": "Compétition créée",
+    "Modification compétition": "Compétition modifiée",
+    "Modification statut compétition": "Statut de compétition modifié",
+    "Suppression compétition": "Compétition supprimée",
+    "Ajout date compétition": "Date ajoutée",
+    "Suppression date compétition": "Date supprimée",
+    "Ouverture/Fermeture automatique": "Statut modifié automatiquement",
+    "Notification Discord présences": "Rappel Discord envoyé",
+    "Changement mot de passe": "Mot de passe modifié"
+  };
+
+  return actions[actionTexte] || actionTexte;
+}
+
+async function sbDetailsJournalLisibles(details) {
+  let texte = sbTexte(details);
+  if (!texte) return "";
+
+  const matchNomCompetition = texte.match(/^ID\s+\d+\s+\|\s+Nom\s*:\s*([^|]+)/i);
+  if (matchNomCompetition) {
+    texte = texte.replace(
+      /^ID\s+\d+\s+\|\s+Nom\s*:\s*[^|]+/i,
+      "Compétition : " + sbTexte(matchNomCompetition[1])
+    );
+  }
+
+  const idsCompetition = new Set();
+  for (const match of texte.matchAll(/Compétition ID\s+(\d+)/gi)) {
+    idsCompetition.add(match[1]);
+  }
+
+  for (const idCompetition of idsCompetition) {
+    const nomCompetition = await sbNomCompetitionDepuisId(idCompetition);
+    texte = texte.replace(
+      new RegExp("Compétition ID\\s+" + idCompetition, "gi"),
+      "Compétition : " + nomCompetition
+    );
+  }
+
+  return texte;
 }
 
 async function sbJournaliser(utilisateur, action, details) {
@@ -394,8 +512,10 @@ async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur) {
 
   await sbJournaliser(
     utilisateur,
-    "Ajout joueur",
-    "Pseudo : " + pseudo + " | Rôles : " + rolesDemandes
+    "Joueur ajouté",
+    "Joueur : " + sbTexte(pseudo) +
+      "\nRôles : " + (rolesDemandes || "Soldat") +
+      "\nStatut : " + (sbTexte(statut) || "Actif")
   );
 
   return {
@@ -433,23 +553,57 @@ async function modifierJoueurSupabase(
     );
   }
 
+  const { data: joueursExistants, error: erreurJoueurExistant } = await supabaseClient
+    .from("joueurs")
+    .select("*")
+    .eq("id", Number(idJoueur))
+    .limit(1);
+
+  if (erreurJoueurExistant) return sbErreur(erreurJoueurExistant.message);
+
+  if (!joueursExistants || joueursExistants.length === 0) {
+    return sbErreur("Joueur introuvable.");
+  }
+
+  const joueurExistant = joueursExistants[0];
+  const nouveauPseudo = sbTexte(pseudo);
+  const nouveauStatut = sbTexte(statut);
+
   const { error } = await supabaseClient
     .from("joueurs")
     .update({
-      pseudo: sbTexte(pseudo),
+      pseudo: nouveauPseudo,
       roles: rolesDemandes,
-      statut: sbTexte(statut),
+      statut: nouveauStatut,
       derniere_modification: new Date().toISOString()
     })
     .eq("id", Number(idJoueur));
 
   if (error) return sbErreur(error.message);
 
-  await sbJournaliser(
-    utilisateur,
-    "Modification joueur",
-    "ID " + idJoueur + " | Nouveau pseudo : " + pseudo
-  );
+  const changements = [];
+
+  if (sbTexte(joueurExistant.pseudo) !== nouveauPseudo) {
+    changements.push("Pseudo : " + sbTexte(joueurExistant.pseudo) + " → " + nouveauPseudo);
+  }
+
+  if (sbTexte(joueurExistant.roles) !== rolesDemandes) {
+    changements.push("Rôles : " + (sbTexte(joueurExistant.roles) || "-") + " → " + (rolesDemandes || "-"));
+  }
+
+  if (sbTexte(joueurExistant.statut) !== nouveauStatut) {
+    changements.push("Statut : " + (sbTexte(joueurExistant.statut) || "-") + " → " + (nouveauStatut || "-"));
+  }
+
+  if (changements.length > 0) {
+    await sbJournaliser(
+      utilisateur,
+      "Joueur modifié",
+      "Joueur : " + (sbTexte(joueurExistant.pseudo) || nouveauPseudo) +
+        "\n" +
+        changements.join("\n")
+    );
+  }
 
   return {
     succes: true,
@@ -514,8 +668,9 @@ async function supprimerJoueurSupabase(idJoueur, utilisateur) {
 
   await sbJournaliser(
     utilisateurTexte,
-    "Suppression joueur",
-    "Pseudo : " + pseudoJoueur + " | Présences supprimées : " + (nbPresences || 0)
+    "Joueur supprimé",
+    "Joueur : " + pseudoJoueur +
+      "\nPrésences supprimées : " + (nbPresences || 0)
   );
 
   return {
@@ -632,26 +787,89 @@ async function sauvegarderPresencesSupabase(idCompetition, pseudo, presences) {
 
   const { data: existantes, error: erreurExistantes } = await supabaseClient
     .from("presences")
-    .select("id,date_competition")
+    .select("id,date_competition,statut,horaires_disponibles")
     .eq("competition_id", idComp)
     .ilike("pseudo", pseudoOfficiel);
 
   if (erreurExistantes) return sbErreur(erreurExistantes.message);
 
-  const indexExistantes = new Set(
-    (existantes || []).map(function (p) {
-      return sbFormatDateISO(p.date_competition);
-    })
-  );
+  const indexExistantes = {};
+
+  (existantes || []).forEach(function (presenceExistante) {
+    indexExistantes[sbFormatDateISO(presenceExistante.date_competition)] = presenceExistante;
+  });
 
   let ajouts = 0;
   let modifications = 0;
+  let suppressions = 0;
+  let horairesModifies = 0;
+  const detailsChangements = [];
 
   lignes.forEach(function (ligne) {
-    if (indexExistantes.has(ligne.date_competition)) {
-      modifications++;
-    } else {
+    const presenceExistante = indexExistantes[ligne.date_competition];
+    const ancienStatut = sbStatutPresenceLisible(presenceExistante?.statut);
+    const nouveauStatut = sbStatutPresenceLisible(ligne.statut);
+    const ancienRenseigne = sbPresenceEstRenseignee(ancienStatut);
+    const nouveauRenseigne = sbPresenceEstRenseignee(nouveauStatut);
+    const anciensHoraires = sbHorairesJournal(presenceExistante?.horaires_disponibles || "");
+    const nouveauxHoraires = sbHorairesJournal(ligne.horaires_disponibles || "");
+    const dateAffichage = sbDateAffichage(ligne.date_competition);
+
+    if (!ancienRenseigne && nouveauRenseigne) {
       ajouts++;
+      detailsChangements.push(
+        "- " +
+          dateAffichage +
+          " : " +
+          ancienStatut +
+          " → " +
+          nouveauStatut +
+          " — " +
+          sbLibelleChangementPresence(ancienStatut, nouveauStatut)
+      );
+      return;
+    }
+
+    if (ancienRenseigne && !nouveauRenseigne) {
+      suppressions++;
+      detailsChangements.push(
+        "- " +
+          dateAffichage +
+          " : " +
+          ancienStatut +
+          " → " +
+          nouveauStatut +
+          " — " +
+          sbLibelleChangementPresence(ancienStatut, nouveauStatut)
+      );
+      return;
+    }
+
+    if (ancienRenseigne && nouveauRenseigne && ancienStatut !== nouveauStatut) {
+      modifications++;
+      detailsChangements.push(
+        "- " +
+          dateAffichage +
+          " : " +
+          ancienStatut +
+          " → " +
+          nouveauStatut +
+          " — " +
+          sbLibelleChangementPresence(ancienStatut, nouveauStatut)
+      );
+      return;
+    }
+
+    if (ancienRenseigne && nouveauRenseigne && anciensHoraires !== nouveauxHoraires) {
+      horairesModifies++;
+      detailsChangements.push(
+        "- " +
+          dateAffichage +
+          " : horaires modifiés — " +
+          (anciensHoraires || "Aucun horaire") +
+          " → " +
+          (nouveauxHoraires || "Aucun horaire")
+      );
     }
   });
 
@@ -668,17 +886,36 @@ async function sauvegarderPresencesSupabase(idCompetition, pseudo, presences) {
     .update({ derniere_modification: new Date().toISOString() })
     .ilike("pseudo", pseudoOfficiel);
 
-  await sbJournaliser(
-    pseudoOfficiel,
-    "Sauvegarde présences",
-    "Compétition ID " + idCompetition + " | Ajouts : " + ajouts + " | Modifications : " + modifications
-  );
+  if (detailsChangements.length > 0) {
+    const nomCompetition = await sbNomCompetitionDepuisId(idComp);
+
+    await sbJournaliser(
+      pseudoOfficiel,
+      "Présences mises à jour",
+      "Compétition : " +
+        nomCompetition +
+        "\nJoueur : " +
+        pseudoOfficiel +
+        "\n\nAjouts : " +
+        ajouts +
+        "\nModifications : " +
+        modifications +
+        "\nSuppressions : " +
+        suppressions +
+        "\nHoraires modifiés : " +
+        horairesModifies +
+        "\n\nDétail :\n" +
+        detailsChangements.join("\n")
+    );
+  }
 
   return {
     succes: true,
     message: "Présences sauvegardées.",
     ajouts: ajouts,
-    modifications: modifications
+    modifications: modifications,
+    suppressions: suppressions,
+    horairesModifies: horairesModifies
   };
 }
 
@@ -735,16 +972,14 @@ async function creerCompetitionCompleteSupabase(config, utilisateur) {
 
   await sbJournaliser(
     utilisateur,
-    "Création compétition complète",
-    "ID " +
-      competition.id +
-      " | Nom : " +
+    "Compétition créée",
+    "Compétition : " +
       config.nom +
-      " | Dates : " +
+      "\nDates : " +
       lignesDates.length +
-      " | Fermeture auto : " +
+      "\nFermeture auto : " +
       (config.fermetureAutoActive ? "Oui" : "Non") +
-      " | Notification présences : " +
+      "\nNotification présences : " +
       (config.notificationPresenceActive ? "Oui" : "Non")
   );
 
@@ -772,10 +1007,13 @@ async function modifierStatutCompetitionSupabase(idCompetition, nouveauStatut, u
 
   if (error) return sbErreur(error.message);
 
+  const nomCompetition = await sbNomCompetitionDepuisId(idCompetition);
+
   await sbJournaliser(
     utilisateur,
-    "Modification statut compétition",
-    "Compétition ID " + idCompetition + " | Nouveau : " + nouveauStatut
+    "Statut de compétition modifié",
+    "Compétition : " + nomCompetition +
+      "\nNouveau statut : " + nouveauStatut
   );
 
   return {
@@ -801,7 +1039,14 @@ async function ajouterDateCompetitionSupabase(idCompetition, dateCompetition, ut
 
   if (error) return sbErreur(error.message);
 
-  await sbJournaliser(utilisateur, "Ajout date compétition", "Compétition ID " + idCompetition + " | Date : " + dateCompetition);
+  const nomCompetition = await sbNomCompetitionDepuisId(idCompetition);
+
+  await sbJournaliser(
+    utilisateur,
+    "Date ajoutée",
+    "Compétition : " + nomCompetition +
+      "\nDate : " + sbDateAffichage(sbFormatDateISO(dateCompetition))
+  );
 
   return {
     succes: true,
@@ -815,6 +1060,16 @@ async function supprimerDateCompetitionSupabase(idDate, utilisateur) {
     return sbErreur("Accès refusé : seul un officier peut gérer les dates.");
   }
 
+  const { data: dates, error: erreurLectureDate } = await supabaseClient
+    .from("dates_competition")
+    .select("competition_id,date_competition")
+    .eq("id", Number(idDate))
+    .limit(1);
+
+  if (erreurLectureDate) return sbErreur(erreurLectureDate.message);
+
+  const dateSupprimee = dates && dates.length > 0 ? dates[0] : null;
+
   const { error } = await supabaseClient
     .from("dates_competition")
     .delete()
@@ -822,7 +1077,19 @@ async function supprimerDateCompetitionSupabase(idDate, utilisateur) {
 
   if (error) return sbErreur(error.message);
 
-  await sbJournaliser(utilisateur, "Suppression date compétition", "Date ID " + idDate);
+  const nomCompetition = dateSupprimee
+    ? await sbNomCompetitionDepuisId(dateSupprimee.competition_id)
+    : "Compétition inconnue";
+  const dateAffichage = dateSupprimee
+    ? sbDateAffichage(dateSupprimee.date_competition)
+    : "Date inconnue";
+
+  await sbJournaliser(
+    utilisateur,
+    "Date supprimée",
+    "Compétition : " + nomCompetition +
+      "\nDate : " + dateAffichage
+  );
 
   return {
     succes: true,
@@ -835,6 +1102,8 @@ async function supprimerCompetitionSupabase(idCompetition, utilisateur) {
     return sbErreur("Accès refusé : seul le Super Admin peut supprimer une compétition.");
   }
 
+  const nomCompetition = await sbNomCompetitionDepuisId(idCompetition);
+
   const { error } = await supabaseClient
     .from("competitions")
     .delete()
@@ -842,7 +1111,11 @@ async function supprimerCompetitionSupabase(idCompetition, utilisateur) {
 
   if (error) return sbErreur(error.message);
 
-  await sbJournaliser(utilisateur, "Suppression compétition", "Compétition ID " + idCompetition);
+  await sbJournaliser(
+    utilisateur,
+    "Compétition supprimée",
+    "Compétition : " + nomCompetition
+  );
 
   return {
     succes: true,
@@ -1134,18 +1407,20 @@ async function chargerJournalActiviteSupabase() {
 
   if (error) return sbErreur(error.message);
 
+  const journal = await Promise.all((data || []).map(async function (ligne) {
+    return {
+      dateHeure: ligne.date_heure
+        ? new Date(ligne.date_heure).toLocaleString("fr-FR")
+        : "",
+      utilisateur: ligne.utilisateur,
+      action: sbActionJournalLisible(ligne.action),
+      details: await sbDetailsJournalLisibles(ligne.details)
+    };
+  }));
+
   return {
     succes: true,
-    journal: (data || []).map(function (ligne) {
-      return {
-        dateHeure: ligne.date_heure
-          ? new Date(ligne.date_heure).toLocaleString("fr-FR")
-          : "",
-        utilisateur: ligne.utilisateur,
-        action: ligne.action,
-        details: ligne.details
-      };
-    })
+    journal: journal
   };
 }
 
@@ -1229,7 +1504,7 @@ async function changerMotDePasseSupabase(pseudo, ancienMdp, nouveauMdp) {
 
   await sbJournaliser(
     pseudo,
-    "Changement mot de passe",
+    "Mot de passe modifié",
     "Mot de passe personnel modifié."
   );
 
@@ -1327,8 +1602,9 @@ async function appliquerOuverturesFermeturesAutomatiquesSupabase() {
 
     await sbJournaliser(
       "Système automatique",
-      "Ouverture/Fermeture automatique",
-      "Compétition ID " + competition.id + " passée en statut : " + nouveauStatut
+      "Statut modifié automatiquement",
+      "Compétition : " + (competition.nom || "Compétition inconnue") +
+        "\nNouveau statut : " + nouveauStatut
     );
   }
 
@@ -1380,16 +1656,14 @@ async function modifierCompetitionCompleteSupabase(config, utilisateur) {
 
   await sbJournaliser(
     utilisateur,
-    "Modification compétition",
-    "ID " +
-      config.idCompetition +
-      " | Nom : " +
+    "Compétition modifiée",
+    "Compétition : " +
       config.nom +
-      " | Statut : " +
+      "\nStatut : " +
       config.statut +
-      " | Fermeture auto : " +
+      "\nFermeture auto : " +
       (config.fermetureAutoActive ? "Oui" : "Non") +
-      " | Notification présences : " +
+      "\nNotification présences : " +
       (config.notificationPresenceActive ? "Oui" : "Non")
   );
 
