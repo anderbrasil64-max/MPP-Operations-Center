@@ -393,6 +393,35 @@ button:disabled {
   flex: 1;
 }
 
+.modal-danger {
+  border-color: #8B1E1E;
+}
+
+.modal-danger h2 {
+  color: #ff5555;
+}
+
+.modal-danger-pseudo {
+  color: #FFFFFF;
+  font-size: 20px;
+  font-weight: bold;
+  margin: 10px 0 18px 0;
+}
+
+.modal-confirm-label {
+  text-align: left;
+  color: #EAEAEA;
+  font-weight: bold;
+}
+
+.modal-confirm-input {
+  margin-top: 8px;
+  margin-bottom: 5px;
+  text-align: center;
+  letter-spacing: 0;
+  font-weight: bold;
+}
+
 @media (max-width: 1000px) {
   .dashboard-grid {
     grid-template-columns: 1fr;

@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.4.0 - Migration complète Supabase
+   Version Alpha 0.6.1 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -269,6 +269,12 @@ async function apiSupabase(action, parametres) {
         parametres.utilisateur
       );
 
+    case "supprimerJoueur":
+      return supprimerJoueurSupabase(
+        parametres.idJoueur,
+        parametres.utilisateur
+      );
+
     case "ajouterDateCompetition":
       return ajouterDateCompetitionSupabase(
         parametres.idCompetition,
@@ -455,6 +461,90 @@ async function modifierJoueurSupabase(
     succes: true,
     message: "Joueur modifié."
   };
+}
+
+async function supprimerJoueurSupabase(idJoueur, utilisateur) {
+  const utilisateurTexte = sbTexte(utilisateur);
+
+  if (!(await sbUtilisateurEstSuperAdmin(utilisateurTexte))) {
+    return sbErreur("Accès refusé : seul un SuperAdmin peut supprimer un joueur.");
+  }
+
+  const { data: joueurs, error: erreurJoueur } = await supabaseClient
+    .from("joueurs")
+    .select("*")
+    .eq("id", Number(idJoueur))
+    .limit(1);
+
+  if (erreurJoueur) return sbErreur(erreurJoueur.message);
+
+  if (!joueurs || joueurs.length === 0) {
+    return sbErreur("Joueur introuvable.");
+  }
+
+  const joueur = joueurs[0];
+  const pseudoJoueur = sbTexte(joueur.pseudo);
+
+  if (!pseudoJoueur) {
+    return sbErreur("Joueur invalide.");
+  }
+
+  if (sbEstSuperAdminPseudo(pseudoJoueur) || sbRolesArray(joueur.roles).includes("superadmin")) {
+    return sbErreur("Impossible de supprimer un SuperAdmin.");
+  }
+
+  if (sbCle(pseudoJoueur) === sbCle(utilisateurTexte)) {
+    return sbErreur("Impossible de supprimer votre propre compte.");
+  }
+
+  const { count: nbPresences, error: erreurComptage } = await supabaseClient
+    .from("presences")
+    .select("id", { count: "exact", head: true })
+    .eq("pseudo", pseudoJoueur);
+
+  if (erreurComptage) return sbErreur(erreurComptage.message);
+
+  const { error: erreurPresences } = await supabaseClient
+    .from("presences")
+    .delete()
+    .eq("pseudo", pseudoJoueur);
+
+  if (erreurPresences) return sbErreur(erreurPresences.message);
+
+  const { error: erreurSuppression } = await supabaseClient
+    .from("joueurs")
+    .delete()
+    .eq("id", Number(idJoueur));
+
+  if (erreurSuppression) return sbErreur(erreurSuppression.message);
+
+  await sbJournaliser(
+    utilisateurTexte,
+    "Suppression joueur",
+    "Pseudo : " + pseudoJoueur + " | Présences supprimées : " + (nbPresences || 0)
+  );
+
+  return {
+    succes: true,
+    message: "Joueur supprimé. Présences supprimées : " + (nbPresences || 0) + ".",
+    pseudo: pseudoJoueur,
+    nbPresencesSupprimees: nbPresences || 0
+  };
+}
+
+async function sbUtilisateurEstSuperAdmin(pseudo) {
+  if (sbEstSuperAdminPseudo(pseudo)) return true;
+
+  const { data, error } = await supabaseClient
+    .from("joueurs")
+    .select("*")
+    .ilike("pseudo", sbTexte(pseudo))
+    .limit(1);
+
+  if (error || !data || data.length === 0) return false;
+
+  return sbCle(data[0].statut) === "actif" &&
+    sbRolesArray(data[0].roles).includes("superadmin");
 }
 
 async function sbUtilisateurEstOfficier(pseudo) {
@@ -790,8 +880,42 @@ function sbCalculerSyntheseJoueur(disponibilites) {
   return "🟠 Partiel";
 }
 
+async function chargerToutesPresencesCompetitionSupabase(idCompetition) {
+  const tailleLot = 1000;
+  let debut = 0;
+  let toutesLesPresences = [];
+
+  while (true) {
+    const { data, error } = await supabaseClient
+      .from("presences")
+      .select("*")
+      .eq("competition_id", Number(idCompetition))
+      .order("id", { ascending: true })
+      .range(debut, debut + tailleLot - 1);
+
+    if (error) return sbErreur(error.message);
+
+    const lot = data || [];
+    toutesLesPresences = toutesLesPresences.concat(lot);
+
+    if (lot.length < tailleLot) {
+      break;
+    }
+
+    debut += tailleLot;
+  }
+
+  return {
+    succes: true,
+    presences: toutesLesPresences
+  };
+}
+
 async function genererTableauPresencesSupabase(idCompetition, utilisateur) {
-  if (!sbEstSuperAdminPseudo(utilisateur) && !(await sbUtilisateurEstOfficier(utilisateur))) {
+  if (
+    !sbEstSuperAdminPseudo(utilisateur) &&
+    !(await sbUtilisateurEstOfficier(utilisateur))
+  ) {
     return sbErreur("Accès refusé : seul un officier peut consulter ce tableau.");
   }
 
@@ -801,31 +925,67 @@ async function genererTableauPresencesSupabase(idCompetition, utilisateur) {
   const joueursResultat = await chargerJoueursSupabase();
   if (!joueursResultat.succes) return joueursResultat;
 
-  const { data: presences, error } = await supabaseClient
-    .from("presences")
-    .select("*")
-    .eq("competition_id", Number(idCompetition));
+  const presencesResultat = await chargerToutesPresencesCompetitionSupabase(idCompetition);
+  if (!presencesResultat.succes) return presencesResultat;
 
-  if (error) return sbErreur(error.message);
-
-  const indexPresences = {};
-
-  (presences || []).forEach(function (presence) {
-    const cle = sbCle(presence.pseudo) + "|" + sbFormatDateFR(presence.date_competition);
-    indexPresences[cle] = {
-      statut: presence.statut || "Non renseigné",
-      horairesDisponibles: presence.horaires_disponibles || ""
-    };
-  });
+  const presences = presencesResultat.presences || [];
 
   const joueursActifs = joueursResultat.joueurs.filter(function (joueur) {
     return sbCle(joueur.statut) === "actif";
   });
 
+  const datesValides = new Set(
+    datesResultat.dates.map(function (dateInfo) {
+      return sbFormatDateISO(dateInfo.dateCompetition);
+    })
+  );
+
+  const pseudosJoueursActifs = new Set(
+    joueursActifs.map(function (joueur) {
+      return sbCle(joueur.pseudo);
+    })
+  );
+
+  const indexPresences = {};
+  const presencesOrphelines = [];
+
+  (presences || []).forEach(function (presence) {
+    const pseudoCle = sbCle(presence.pseudo);
+    const dateCle = sbFormatDateISO(presence.date_competition);
+    const dateExiste = datesValides.has(dateCle);
+    const joueurActifExiste = pseudosJoueursActifs.has(pseudoCle);
+    const causes = [];
+
+    if (!dateExiste) {
+      causes.push("date absente de la compétition");
+    }
+
+    if (!joueurActifExiste) {
+      causes.push("joueur inactif ou supprimé");
+    }
+
+    if (causes.length > 0) {
+      presencesOrphelines.push({
+        pseudo: presence.pseudo || "",
+        dateCompetition: dateCle,
+        statut: presence.statut || "Non renseigné",
+        cause: causes.join(" + ")
+      });
+      return;
+    }
+
+    indexPresences[pseudoCle + "|" + dateCle] = {
+      statut: presence.statut || "Non renseigné",
+      horairesDisponibles: presence.horaires_disponibles || ""
+    };
+  });
+
   const lignes = joueursActifs.map(function (joueur) {
     const disponibilites = datesResultat.dates.map(function (dateInfo) {
-      const cle = sbCle(joueur.pseudo) + "|" + dateInfo.dateCompetition;
-      const presence = indexPresences[cle] || {
+      const pseudoCle = sbCle(joueur.pseudo);
+      const dateCle = sbFormatDateISO(dateInfo.dateCompetition);
+
+      const presence = indexPresences[pseudoCle + "|" + dateCle] || {
         statut: "Non renseigné",
         horairesDisponibles: ""
       };
@@ -850,7 +1010,9 @@ async function genererTableauPresencesSupabase(idCompetition, utilisateur) {
   return {
     succes: true,
     dates: datesResultat.dates,
-    lignes: lignes
+    lignes: lignes,
+    presencesOrphelines: presencesOrphelines,
+    nbPresencesChargees: presences.length
   };
 }
 

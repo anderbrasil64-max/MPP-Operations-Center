@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.4.0 - Supabase
+   Version Alpha 0.6.1 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.5.6 - Supabase";
+const VERSION_SITE = "Alpha 0.6.1 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -592,7 +592,7 @@ function afficherSelectionCompetitionOfficier() {
       html += `
         <div class="competition-card">
           <h3>${escapeHTML(competition.nom)}</h3>
-          <p>Statut : ${escapeHTML(competition.statut)}</p>
+          <p>ID : ${Number(competition.id)} | Statut : ${escapeHTML(competition.statut)}</p>
           <p>${escapeHTML(competition.description || "")}</p>
           <button onclick="afficherTableauPresencesOfficier(${Number(competition.id)}, '${jsString(competition.nom)}')">
             Voir les présences
@@ -615,17 +615,25 @@ function afficherSelectionCompetitionOfficier() {
 function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
   definirModeCarte("large");
   afficherChargement(nomCompetition, "Chargement du tableau...");
-  const cleCache = "tableau_" + idCompetition;
-  if (cacheFrontend.tableauPresences[cleCache] && estCacheValide(cleCache)) {
-    construireTableauPresencesOfficier(idCompetition, nomCompetition, cacheFrontend.tableauPresences[cleCache]);
-    return;
-  }
-  appelAPI("genererTableauPresences", { idCompetition, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
-    if (!data.succes) return afficherErreur(data.message);
-    cacheFrontend.tableauPresences[cleCache] = data;
-    cacheFrontend.timestamp[cleCache] = Date.now();
-    construireTableauPresencesOfficier(idCompetition, nomCompetition, data);
-  });
+
+  appelAPI(
+    "genererTableauPresences",
+    {
+      idCompetition,
+      utilisateur: utilisateurConnecte.joueur.pseudo
+    },
+    function (data) {
+      if (!data.succes) {
+        return afficherErreur(data.message);
+      }
+
+      construireTableauPresencesOfficier(
+        idCompetition,
+        nomCompetition,
+        data
+      );
+    }
+  );
 }
 
 function construireTableauPresencesOfficier(idCompetition, nomCompetition, data) {
@@ -682,6 +690,23 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
   const stats = calculerStatistiquesTableau(lignesVisibles);
   const statsParDate = calculerStatistiquesParDate(datesVisibles, lignesVisibles);
   const effectifParHoraire = calculerEffectifParHoraire(datesVisibles, lignesVisibles);
+  const presencesOrphelines = data.presencesOrphelines || [];
+  const htmlPresencesOrphelines = presencesOrphelines.length > 0
+    ? `
+      <div class="recap-box">
+        <p><strong>⚠️ Présences non rattachées détectées : ${presencesOrphelines.length}</strong></p>
+        ${presencesOrphelines.map(function (presence) {
+          return `
+            <p>
+              - Pseudo : ${escapeHTML(presence.pseudo)}
+              | Date : ${escapeHTML(presence.dateCompetition)}
+              | Cause : ${escapeHTML(presence.cause)}
+            </p>
+          `;
+        }).join("")}
+      </div>
+    `
+    : "";
 
   const afficherEffectifParHoraire = datesVisibles.some(function (date) {
     return String(date.horaires || "")
@@ -707,6 +732,17 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
   let html = `
     <div class="form-zone">
       <h2>${escapeHTML(nomCompetition)}</h2>
+      <p>Visualisation des présences — ID compétition : ${Number(idCompetition)}</p>
+
+      <div class="recap-box">
+        <p><strong>Diagnostic tableau officier</strong></p>
+        <p>ID compétition chargé : ${Number(idCompetition)}</p>
+        <p>Dates reçues : ${data.dates.length}</p>
+        <p>Joueurs / lignes reçus : ${data.lignes.length}</p>
+        <p>Présences chargées : ${Number(data.nbPresencesChargees || 0)}</p>
+        <p>Présences orphelines : ${presencesOrphelines.length}</p>
+        <p>Version site : ${escapeHTML(VERSION_SITE)}</p>
+      </div>
 
       ${
         nbDatesMasquees > 0
@@ -717,6 +753,8 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
           `
           : ""
       }
+
+      ${htmlPresencesOrphelines}
 
       <div class="stats-box">
         <h3>Statistiques générales</h3>
@@ -1860,6 +1898,122 @@ function modifierJoueurDepuisSite(idJoueur) {
   });
 }
 
+function confirmerSuppressionJoueur(idJoueur) {
+  const joueur = joueursGestionCache.find(function (item) {
+    return Number(item.id) === Number(idJoueur);
+  });
+
+  if (!joueur) {
+    return afficherMessageModal("Erreur", "Joueur introuvable dans la liste affichée.");
+  }
+
+  const pseudo = String(joueur.pseudo || "").trim();
+  const roles = String(joueur.roles || "").toLowerCase();
+  const pseudoConnecte = String(utilisateurConnecte?.joueur?.pseudo || "").trim().toLowerCase();
+
+  if (!estSuperAdminConnecte()) {
+    return afficherMessageModal("Accès refusé", "Seul un SuperAdmin peut supprimer un joueur.");
+  }
+
+  if (!pseudo) {
+    return afficherMessageModal("Erreur", "Joueur invalide.");
+  }
+
+  if (roles.includes("superadmin")) {
+    return afficherMessageModal("Action impossible", "Impossible de supprimer un SuperAdmin.");
+  }
+
+  if (pseudo.toLowerCase() === pseudoConnecte) {
+    return afficherMessageModal("Action impossible", "Impossible de supprimer votre propre compte.");
+  }
+
+  fermerModal();
+
+  const modal = document.createElement("div");
+  modal.id = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal-box modal-danger">
+      <h2>Supprimer le joueur</h2>
+      <p class="modal-danger-pseudo">${escapeHTML(pseudo)}</p>
+      <div class="modal-message">
+        <p>Cette action est définitive.</p>
+        <p>Le joueur sera supprimé du clan et toutes ses présences seront aussi supprimées.</p>
+      </div>
+      <label for="confirmationSuppressionJoueur" class="modal-confirm-label">
+        Tapez SUPPRIMER pour confirmer
+      </label>
+      <input
+        type="text"
+        id="confirmationSuppressionJoueur"
+        class="modal-confirm-input"
+        autocomplete="off"
+      >
+      <div class="modal-actions">
+        <button class="secondary-button" id="annulerSuppressionJoueur">Annuler</button>
+        <button class="danger-button" id="confirmerSuppressionJoueur" disabled>
+          Supprimer définitivement
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const champConfirmation = document.getElementById("confirmationSuppressionJoueur");
+  const boutonConfirmer = document.getElementById("confirmerSuppressionJoueur");
+
+  document.getElementById("annulerSuppressionJoueur").onclick = fermerModal;
+
+  champConfirmation.oninput = function () {
+    boutonConfirmer.disabled = champConfirmation.value !== "SUPPRIMER";
+  };
+
+  champConfirmation.onkeydown = function (event) {
+    if (event.key === "Enter" && champConfirmation.value === "SUPPRIMER") {
+      fermerModal();
+      supprimerJoueurDepuisSite(Number(idJoueur));
+    }
+  };
+
+  boutonConfirmer.onclick = function () {
+    if (champConfirmation.value !== "SUPPRIMER") return;
+    fermerModal();
+    supprimerJoueurDepuisSite(Number(idJoueur));
+  };
+
+  champConfirmation.focus();
+}
+
+function supprimerJoueurDepuisSite(idJoueur) {
+  if (!estSuperAdminConnecte()) {
+    return afficherMessageModal("Accès refusé", "Seul un SuperAdmin peut supprimer un joueur.");
+  }
+
+  afficherChargement("Suppression du joueur", "Suppression du joueur et de ses présences...");
+
+  appelAPI(
+    "supprimerJoueur",
+    {
+      idJoueur,
+      utilisateur: utilisateurConnecte.joueur.pseudo
+    },
+    function (data) {
+      if (!data.succes) {
+        return afficherMessageModal("Erreur", data.message);
+      }
+
+      viderCacheFrontend();
+      joueursGestionCache = [];
+
+      afficherMessageModal(
+        "Joueur supprimé",
+        escapeHTML(data.message),
+        afficherGestionJoueurs
+      );
+    }
+  );
+}
+
 function chargerSansReponse(idCompetition, nomCompetition) {
   definirModeCarte("large");
   afficherChargement("Joueurs sans réponse");
@@ -1971,7 +2125,7 @@ function calculerStatistiquesParDate(dates, lignes) {
       const statut = dispo ? dispo.statut : "Non renseigné";
       if (statut === "Présent") presents++; else if (statut === "Absent") absents++; else if (statut === "Remplaçant") remplacants++; else nonRenseignes++;
     });
-    return { dateAffichage: dateInfo.dateAffichage, presents, absents, remplacants, nonRenseignes };
+    return { dateAffichage: dateInfo.dateAffichage, dateCompetition: dateInfo.dateCompetition, presents, absents, remplacants, nonRenseignes };
   });
 }
 
@@ -2665,6 +2819,22 @@ function afficherTableauGestionJoueurs(joueurs) {
   }
 
   joueurs.forEach(function (joueur) {
+    const rolesJoueur = String(joueur.roles || "");
+    const estJoueurSuperAdmin = rolesJoueur.toLowerCase().includes("superadmin");
+    const estJoueurConnecte =
+      String(joueur.pseudo || "").trim().toLowerCase() ===
+      String(utilisateurConnecte?.joueur?.pseudo || "").trim().toLowerCase();
+    const boutonSuppression =
+      estSuperAdminConnecte() && !estJoueurSuperAdmin && !estJoueurConnecte
+        ? `
+          <button
+            class="danger-button"
+            onclick="confirmerSuppressionJoueur(${Number(joueur.id)})">
+            🗑️ Supprimer
+          </button>
+        `
+        : "";
+
     html += `
       <tr>
         <td>${escapeHTML(joueur.pseudo)}</td>
@@ -2677,6 +2847,7 @@ function afficherTableauGestionJoueurs(joueurs) {
             onclick='afficherFormulaireModificationJoueur(${JSON.stringify(joueur)})'>
             ✏️ Modifier
           </button>
+          ${boutonSuppression}
         </td>
       </tr>
     `;
