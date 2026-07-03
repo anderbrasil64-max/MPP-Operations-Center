@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.6.4 - Supabase
+   Version Alpha 0.6.5 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.6.4 - Supabase";
+const VERSION_SITE = "Alpha 0.6.5 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -136,6 +136,20 @@ function deconnexion() {
   accesOfficierValide = false;
   viderCacheFrontend();
   afficherConnexion();
+}
+
+function retourAccueilConnecte() {
+  if (!utilisateurConnecte) {
+    afficherConnexion();
+    return;
+  }
+
+  if (estOfficierConnecte() || estSuperAdminConnecte()) {
+    afficherChoixOfficier();
+    return;
+  }
+
+  afficherCompetitionsJoueur();
 }
 
 function afficherChoixOfficier() {
@@ -2278,6 +2292,10 @@ function afficherChangerMotDePasse() {
 
       <button onclick="changerMotDePasse()">
         Enregistrer
+      </button>
+
+      <button onclick="retourAccueilConnecte()" class="secondary-button">
+        Annuler
       </button>
 
     </div>
