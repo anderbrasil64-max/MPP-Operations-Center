@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.7.0 - Supabase
+   Version Alpha 0.7.1 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.7.0 - Supabase";
+const VERSION_SITE = "Alpha 0.7.1 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -25,6 +25,13 @@ let journalActiviteValeursFiltres = {
   utilisateurs: [],
   actions: []
 };
+const STATUTS_GESTION_JOUEURS = ["Actif", "Inactif", "Suspendu"];
+const ORDRE_GRADES_JOUEURS = ["superadmin", "officier", "strateur", "soldat", "reserviste", "recrue"];
+let triGestionJoueurs = {
+  colonne: "pseudo",
+  direction: "asc"
+};
+let filtresStatutGestionJoueurs = new Set(STATUTS_GESTION_JOUEURS);
 
 const DUREE_CACHE_FRONT_MS = 5 * 60 * 1000;
 
@@ -1610,6 +1617,11 @@ function afficherGestionJoueurs() {
     }
 
     joueursGestionCache = data.joueurs || [];
+    triGestionJoueurs = {
+      colonne: "pseudo",
+      direction: "asc"
+    };
+    filtresStatutGestionJoueurs = new Set(STATUTS_GESTION_JOUEURS);
 
     let html = `
       <div class="form-zone">
@@ -1619,23 +1631,22 @@ function afficherGestionJoueurs() {
           ➕ Ajouter un joueur
         </button>
 
-        <div class="stats-box">
-          <h3>Filtres et tri</h3>
-
-          <label for="rechercheJoueur">Rechercher un pseudo</label>
+        <div class="players-toolbar">
           <input
-            type="text"
+            type="search"
             id="rechercheJoueur"
-            placeholder="Ex : ap"
+            class="players-search-input"
+            placeholder="Rechercher un joueur&hellip;"
             oninput="appliquerFiltresGestionJoueurs()"
           >
-
-          <label for="triJoueurs">Trier par</label>
-          <select id="triJoueurs" onchange="appliquerFiltresGestionJoueurs()">
-            <option value="pseudo">Ordre alphabétique</option>
-            <option value="grade">Grade</option>
-            <option value="statut">Statut</option>
-          </select>
+          <button
+            type="button"
+            id="resetGestionJoueurs"
+            class="secondary-button players-reset-button"
+            hidden
+            onclick="reinitialiserVueGestionJoueurs()">
+            Réinitialiser
+          </button>
         </div>
 
         <div id="zoneTableauJoueurs"></div>
@@ -2973,57 +2984,208 @@ function confirmerModificationCompetition(configJSON) {
   );
 }
 
-function appliquerFiltresGestionJoueurs() {
-  const recherche = String(document.getElementById("rechercheJoueur")?.value || "")
-    .trim()
+function normaliserTexteGestionJoueurs(valeur) {
+  return String(valeur || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
 
-  const tri = document.getElementById("triJoueurs")?.value || "pseudo";
+function statutGestionJoueur(joueur) {
+  const statutNormalise = normaliserTexteGestionJoueurs(joueur?.statut);
 
-  let joueursFiltres = joueursGestionCache.filter(function (joueur) {
-    return String(joueur.pseudo || "")
-      .toLowerCase()
-      .includes(recherche);
-  });
+  if (statutNormalise === "actif") return "Actif";
+  if (statutNormalise === "inactif") return "Inactif";
+  if (statutNormalise === "suspendu") return "Suspendu";
 
-  joueursFiltres.sort(function (a, b) {
-    if (tri === "grade") {
-      return calculerPrioriteGrade(a.roles) - calculerPrioriteGrade(b.roles)
-        || String(a.pseudo || "").localeCompare(String(b.pseudo || ""));
-    }
-
-    if (tri === "statut") {
-      return calculerPrioriteStatut(a.statut) - calculerPrioriteStatut(b.statut)
-        || String(a.pseudo || "").localeCompare(String(b.pseudo || ""));
-    }
-
-    return String(a.pseudo || "").localeCompare(String(b.pseudo || ""));
-  });
-
-  afficherTableauGestionJoueurs(joueursFiltres);
+  return String(joueur?.statut || "-");
 }
 
 function calculerPrioriteGrade(roles) {
-  const texteRoles = String(roles || "").toLowerCase();
+  const texteRoles = normaliserTexteGestionJoueurs(roles);
+  const indexGrade = ORDRE_GRADES_JOUEURS.findIndex(function (grade) {
+    return texteRoles.includes(grade);
+  });
 
-  if (texteRoles.includes("superadmin")) return 1;
-  if (texteRoles.includes("officier")) return 2;
-  if (texteRoles.includes("strateur")) return 3;
-  if (texteRoles.includes("soldat")) return 4;
-  if (texteRoles.includes("réserviste") || texteRoles.includes("reserviste")) return 5;
-  if (texteRoles.includes("recrue")) return 6;
-
-  return 99;
+  return indexGrade === -1 ? 99 : indexGrade + 1;
 }
 
-function calculerPrioriteStatut(statut) {
-  const texteStatut = String(statut || "").toLowerCase();
+function comparerJoueursGestion(a, b) {
+  const direction = triGestionJoueurs.direction === "desc" ? -1 : 1;
+  const pseudoA = String(a.pseudo || "");
+  const pseudoB = String(b.pseudo || "");
+  const comparaisonPseudo = pseudoA.localeCompare(pseudoB, "fr", { sensitivity: "base" });
 
-  if (texteStatut === "actif") return 1;
-  if (texteStatut === "inactif") return 2;
-  if (texteStatut === "suspendu") return 3;
+  if (triGestionJoueurs.colonne === "grade") {
+    const comparaisonGrade = calculerPrioriteGrade(a.roles) - calculerPrioriteGrade(b.roles);
+    return comparaisonGrade !== 0 ? comparaisonGrade * direction : comparaisonPseudo;
+  }
 
-  return 99;
+  return comparaisonPseudo * direction;
+}
+
+function gestionJoueursEtatActif() {
+  const recherche = String(document.getElementById("rechercheJoueur")?.value || "").trim();
+
+  return recherche !== "" ||
+    triGestionJoueurs.colonne !== "pseudo" ||
+    triGestionJoueurs.direction !== "asc" ||
+    filtresStatutGestionJoueurs.size !== STATUTS_GESTION_JOUEURS.length;
+}
+
+function mettreAJourBoutonResetGestionJoueurs() {
+  const bouton = document.getElementById("resetGestionJoueurs");
+  if (!bouton) return;
+  bouton.hidden = !gestionJoueursEtatActif();
+}
+
+function appliquerFiltresGestionJoueurs() {
+  const recherche = normaliserTexteGestionJoueurs(
+    document.getElementById("rechercheJoueur")?.value || ""
+  ).trim();
+
+  const joueursFiltres = joueursGestionCache
+    .filter(function (joueur) {
+      const pseudo = normaliserTexteGestionJoueurs(joueur.pseudo);
+      const statut = statutGestionJoueur(joueur);
+
+      return pseudo.includes(recherche) && filtresStatutGestionJoueurs.has(statut);
+    })
+    .sort(comparerJoueursGestion);
+
+  afficherTableauGestionJoueurs(joueursFiltres);
+  mettreAJourBoutonResetGestionJoueurs();
+}
+
+function definirTriGestionJoueurs(colonne) {
+  if (triGestionJoueurs.colonne === colonne) {
+    triGestionJoueurs.direction = triGestionJoueurs.direction === "asc" ? "desc" : "asc";
+  } else {
+    triGestionJoueurs = {
+      colonne: colonne,
+      direction: "asc"
+    };
+  }
+
+  appliquerFiltresGestionJoueurs();
+}
+
+function selectionnerStatutsGestionJoueurs(toutSelectionner) {
+  filtresStatutGestionJoueurs = toutSelectionner
+    ? new Set(STATUTS_GESTION_JOUEURS)
+    : new Set();
+
+  appliquerFiltresGestionJoueurs();
+}
+
+function changerFiltreStatutGestionJoueurs(statut, actif) {
+  if (actif) {
+    filtresStatutGestionJoueurs.add(statut);
+  } else {
+    filtresStatutGestionJoueurs.delete(statut);
+  }
+
+  appliquerFiltresGestionJoueurs();
+}
+
+function reinitialiserVueGestionJoueurs() {
+  const champRecherche = document.getElementById("rechercheJoueur");
+  if (champRecherche) champRecherche.value = "";
+
+  triGestionJoueurs = {
+    colonne: "pseudo",
+    direction: "asc"
+  };
+  filtresStatutGestionJoueurs = new Set(STATUTS_GESTION_JOUEURS);
+
+  appliquerFiltresGestionJoueurs();
+}
+
+function rendreEnteteTriGestionJoueurs(colonne, titre) {
+  const actif = triGestionJoueurs.colonne === colonne;
+  const direction = triGestionJoueurs.direction;
+  const libelleDirection = colonne === "pseudo"
+    ? (direction === "asc" ? "A → Z" : "Z → A")
+    : (direction === "asc" ? "Fort → faible" : "Faible → fort");
+  const classeBouton = actif
+    ? "players-sort-button players-sort-button-active"
+    : "players-sort-button";
+
+  return `
+    <button type="button" class="${classeBouton}" onclick="definirTriGestionJoueurs('${colonne}')">
+      <span>${escapeHTML(titre)}</span>
+      <span class="players-sort-indicator">${escapeHTML(actif ? libelleDirection : "↕")}</span>
+    </button>
+  `;
+}
+
+function rendreFiltreStatutGestionJoueurs() {
+  const compteur = filtresStatutGestionJoueurs.size + "/" + STATUTS_GESTION_JOUEURS.length;
+  const classeCompteur = filtresStatutGestionJoueurs.size === STATUTS_GESTION_JOUEURS.length
+    ? "journal-filter-count"
+    : "journal-filter-count journal-filter-count-active";
+
+  let html = `
+    <details class="journal-filter journal-header-filter players-status-filter">
+      <summary>
+        <span class="journal-filter-label">Statut</span>
+        <span class="journal-filter-meta">
+          <span class="${classeCompteur}">${escapeHTML(compteur)}</span>
+          <span class="journal-filter-arrow">▾</span>
+        </span>
+      </summary>
+      <div class="journal-filter-panel players-status-filter-panel">
+        <div class="journal-filter-actions">
+          <button type="button" onclick="selectionnerStatutsGestionJoueurs(true)">Tout sélectionner</button>
+          <button type="button" onclick="selectionnerStatutsGestionJoueurs(false)" class="secondary-button">Tout désélectionner</button>
+        </div>
+  `;
+
+  STATUTS_GESTION_JOUEURS.forEach(function (statut) {
+    html += `
+      <label class="journal-filter-option">
+        <input
+          type="checkbox"
+          value="${escapeHTML(statut)}"
+          ${filtresStatutGestionJoueurs.has(statut) ? "checked" : ""}
+          onchange="changerFiltreStatutGestionJoueurs(this.value, this.checked)"
+        >
+        <span>${escapeHTML(statut)}</span>
+      </label>
+    `;
+  });
+
+  html += `
+      </div>
+    </details>
+  `;
+
+  return html;
+}
+
+function formaterDerniereConnexionJoueur(valeur) {
+  if (!valeur) return "Jamais connecté";
+
+  const dateConnexion = new Date(valeur);
+  if (Number.isNaN(dateConnexion.getTime())) return "Jamais connecté";
+
+  const parties = new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Europe/Paris",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(dateConnexion);
+  const valeurs = {};
+
+  parties.forEach(function (partie) {
+    valeurs[partie.type] = partie.value;
+  });
+
+  return `${valeurs.day}/${valeurs.month}/${valeurs.year} - ${valeurs.hour}:${valeurs.minute}:${valeurs.second}`;
 }
 
 function afficherTableauGestionJoueurs(joueurs) {
@@ -3033,14 +3195,14 @@ function afficherTableauGestionJoueurs(joueurs) {
 
   let html = `
     <div class="table-container">
-      <table class="presence-table">
+      <table class="presence-table players-table">
         <thead>
           <tr>
-            <th>Pseudo</th>
-            <th>Grade</th>
-            <th>Statut</th>
-            <th>Dernière modification</th>
-            <th>Actions</th>
+            <th class="players-pseudo-column">${rendreEnteteTriGestionJoueurs("pseudo", "Pseudo")}</th>
+            <th class="players-grade-column">${rendreEnteteTriGestionJoueurs("grade", "Grade")}</th>
+            <th class="players-status-column">${rendreFiltreStatutGestionJoueurs()}</th>
+            <th class="players-login-column">Dernière connexion</th>
+            <th class="players-actions-column">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -3049,7 +3211,7 @@ function afficherTableauGestionJoueurs(joueurs) {
   if (joueurs.length === 0) {
     html += `
       <tr>
-        <td colspan="5">Aucun joueur trouvé.</td>
+        <td colspan="5" class="players-empty">Aucun joueur ne correspond aux filtres sélectionnés.</td>
       </tr>
     `;
   }
@@ -3057,6 +3219,7 @@ function afficherTableauGestionJoueurs(joueurs) {
   joueurs.forEach(function (joueur) {
     const rolesJoueur = String(joueur.roles || "");
     const estJoueurSuperAdmin = rolesJoueur.toLowerCase().includes("superadmin");
+    const statutJoueur = statutGestionJoueur(joueur);
     const estJoueurConnecte =
       String(joueur.pseudo || "").trim().toLowerCase() ===
       String(utilisateurConnecte?.joueur?.pseudo || "").trim().toLowerCase();
@@ -3075,15 +3238,17 @@ function afficherTableauGestionJoueurs(joueurs) {
       <tr>
         <td>${escapeHTML(joueur.pseudo)}</td>
         <td>${escapeHTML(joueur.roles || "-")}</td>
-        <td>${escapeHTML(joueur.statut || "-")}</td>
-        <td>${escapeHTML(joueur.derniereModification || "-")}</td>
+        <td>${escapeHTML(statutJoueur)}</td>
+        <td class="players-last-login">${escapeHTML(formaterDerniereConnexionJoueur(joueur.derniereConnexion))}</td>
         <td>
-          <button
-            class="secondary-button"
-            onclick='afficherFormulaireModificationJoueur(${JSON.stringify(joueur)})'>
-            ✏️ Modifier
-          </button>
-          ${boutonSuppression}
+          <div class="players-actions-cell">
+            <button
+              class="secondary-button"
+              onclick='afficherFormulaireModificationJoueur(${JSON.stringify(joueur)})'>
+              ✏️ Modifier
+            </button>
+            ${boutonSuppression}
+          </div>
         </td>
       </tr>
     `;

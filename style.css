@@ -434,6 +434,116 @@ button:disabled {
   font-weight: bold;
 }
 
+.players-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 12px 0;
+}
+
+.players-search-input {
+  width: min(100%, 280px);
+  margin-bottom: 0;
+}
+
+.players-reset-button {
+  width: auto;
+  min-height: 38px;
+  margin-top: 0;
+  padding: 9px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.players-table th,
+.players-table td {
+  text-align: left;
+  cursor: default;
+}
+
+.players-table td:first-child,
+.players-table th:first-child {
+  width: 160px;
+}
+
+.players-table td:last-child,
+.players-table th:last-child {
+  width: 190px;
+}
+
+.players-grade-column {
+  width: 150px;
+}
+
+.players-status-column {
+  width: 135px;
+}
+
+.players-login-column {
+  width: 170px;
+}
+
+.players-sort-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #EAEAEA;
+  font: inherit;
+  font-weight: bold;
+  text-align: left;
+}
+
+.players-sort-button:hover,
+.players-sort-button-active {
+  background: transparent;
+  color: #FF6A00;
+}
+
+.players-sort-indicator {
+  color: #CFCFCF;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.players-sort-button-active .players-sort-indicator {
+  color: #FF6A00;
+}
+
+.players-status-filter-panel {
+  width: 230px;
+}
+
+.players-last-login {
+  white-space: nowrap;
+}
+
+.players-actions-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.players-actions-cell button {
+  width: auto;
+  margin-top: 0;
+}
+
+.players-empty {
+  text-align: center;
+  color: #CFCFCF;
+  font-weight: bold;
+}
+
 .table-actions {
   display: flex;
   gap: 20px;
@@ -672,6 +782,25 @@ button:disabled {
 
   .journal-reset-button {
     width: auto;
+  }
+
+  .players-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .players-search-input,
+  .players-reset-button {
+    width: 100%;
+  }
+
+  .players-last-login {
+    white-space: normal;
+  }
+
+  .players-actions-cell {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
 }
