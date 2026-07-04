@@ -208,6 +208,109 @@ button:disabled {
   border-color: #707070;
 }
 
+.home-screen h2 {
+  margin-bottom: 18px;
+}
+
+.home-section {
+  margin: 18px 0;
+}
+
+.home-section-title {
+  margin: 0 0 8px 0;
+  color: #FF6A00;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.home-primary-action {
+  margin-top: 0;
+  font-size: 15px;
+}
+
+.home-action-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.home-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #4B6B3C;
+  border-radius: 8px;
+  padding: 14px;
+  background: #1E1E1E;
+}
+
+.home-card-body {
+  min-width: 0;
+}
+
+.home-card-title {
+  margin: 0 0 4px 0;
+  color: #EAEAEA;
+  font-weight: bold;
+}
+
+.home-card-text {
+  margin: 0;
+  color: #CFCFCF;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.admin-action-card,
+.discord-status-card {
+  align-items: center;
+}
+
+.discord-status-text {
+  margin: 0 0 4px 0;
+  font-weight: bold;
+}
+
+.discord-status-text-linked {
+  color: #8dff8d;
+}
+
+.discord-status-text-pending {
+  color: #ffd88a;
+}
+
+.admin-action-button,
+.account-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: auto;
+  min-width: 96px;
+  margin-top: 0;
+  padding: 9px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.account-actions {
+  text-align: center;
+}
+
+.notification-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #FF6A00;
+  color: #FFFFFF;
+  font-size: 12px;
+  line-height: 1;
+}
+
 .table-subtitle {
   margin-top: -5px;
   color: #CFCFCF;
@@ -544,6 +647,113 @@ button:disabled {
   font-weight: bold;
 }
 
+.discord-link-box,
+.discord-request-card {
+  border: 1px solid #4B6B3C;
+  border-radius: 8px;
+  padding: 15px;
+  margin: 15px 0;
+  background: #1E1E1E;
+}
+
+.discord-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: auto;
+  min-width: 0;
+  padding: 9px 12px;
+  margin: 0;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.discord-code-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.discord-code-box {
+  flex: 1;
+  padding: 14px;
+  margin: 0;
+  border: 1px solid #FF6A00;
+  border-radius: 6px;
+  background: #151515;
+  color: #FF6A00;
+  font-size: 28px;
+  font-weight: bold;
+  text-align: center;
+  letter-spacing: 0;
+}
+
+.discord-copy-button {
+  width: 48px;
+  min-width: 48px;
+  margin-top: 0;
+  padding: 0;
+  border: 1px solid #4B6B3C;
+  background: #2A2A2A;
+  font-size: 20px;
+}
+
+.discord-copy-button:hover {
+  background: #3A3A3A;
+}
+
+.discord-copy-feedback {
+  margin: -4px 0 10px 0;
+  color: #8dff8d;
+  font-size: 13px;
+  text-align: right;
+}
+
+.discord-status-linked,
+.discord-status-pending {
+  padding: 10px 12px;
+  margin: 10px 0 14px 0;
+  border-radius: 6px;
+  font-weight: bold;
+}
+
+.discord-status-linked {
+  border: 1px solid #4B6B3C;
+  color: #8dff8d;
+  background: rgba(75, 107, 60, 0.22);
+}
+
+.discord-status-pending {
+  border: 1px solid #8A6A2A;
+  color: #ffd88a;
+  background: rgba(138, 106, 42, 0.18);
+}
+
+.discord-instructions {
+  color: #CFCFCF;
+  line-height: 1.55;
+  padding-left: 22px;
+}
+
+.discord-request-card h3 {
+  margin-top: 0;
+  color: #FF6A00;
+}
+
+.discord-request-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.discord-request-actions button {
+  width: auto;
+  min-width: 130px;
+}
+
 .table-actions {
   display: flex;
   gap: 20px;
@@ -801,6 +1011,29 @@ button:disabled {
   .players-actions-cell {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .home-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .discord-link-button,
+  .admin-action-button,
+  .account-action-button {
+    width: 100%;
+  }
+
+  .discord-code-box {
+    font-size: 22px;
+  }
+
+  .discord-request-actions {
+    flex-direction: column;
+  }
+
+  .discord-request-actions button {
+    width: 100%;
   }
 
 }

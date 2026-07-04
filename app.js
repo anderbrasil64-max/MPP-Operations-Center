@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.7.1 - Supabase
+   Version Alpha 0.9.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.7.1 - Supabase";
+const VERSION_SITE = "Alpha 0.9.0 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -32,6 +32,8 @@ let triGestionJoueurs = {
   direction: "asc"
 };
 let filtresStatutGestionJoueurs = new Set(STATUTS_GESTION_JOUEURS);
+let motDePasseDemandesDiscord = "";
+let nbDemandesLiaisonDiscord = null;
 
 const DUREE_CACHE_FRONT_MS = 5 * 60 * 1000;
 
@@ -137,7 +139,7 @@ async function connexion() {
     if (estOfficierConnecte() || estSuperAdminConnecte()) {
       afficherDemandeMotDePasseOfficier();
     } else {
-      afficherCompetitionsJoueur();
+      afficherAccueilJoueur();
     }
 
   } catch (erreur) {
@@ -152,6 +154,8 @@ async function connexion() {
 function deconnexion() {
   utilisateurConnecte = null;
   accesOfficierValide = false;
+  motDePasseDemandesDiscord = "";
+  nbDemandesLiaisonDiscord = null;
   viderCacheFrontend();
   afficherConnexion();
 }
@@ -167,24 +171,168 @@ function retourAccueilConnecte() {
     return;
   }
 
-  afficherCompetitionsJoueur();
+  afficherAccueilJoueur();
+}
+
+function rendreBoutonDemandesDiscordAccueil() {
+  const badge = Number.isInteger(nbDemandesLiaisonDiscord)
+    ? `<span id="badgeDemandesDiscord" class="notification-badge">${nbDemandesLiaisonDiscord}</span>`
+    : `<span id="badgeDemandesDiscord" class="notification-badge" hidden></span>`;
+
+  return `
+    <button onclick="afficherDemandesLiaisonDiscord()" class="secondary-button admin-action-button">
+      <span>Demandes Discord</span>
+      ${badge}
+    </button>
+  `;
+}
+
+function mettreAJourBadgeDemandesDiscord(nombre) {
+  nbDemandesLiaisonDiscord = Number(nombre) || 0;
+
+  const badge = document.getElementById("badgeDemandesDiscord");
+  if (!badge) return;
+
+  badge.hidden = false;
+  badge.textContent = String(nbDemandesLiaisonDiscord);
+}
+
+function actualiserCompteurDemandesDiscordAccueil() {
+  if (!estSuperAdminConnecte() || !motDePasseDemandesDiscord) return;
+
+  appelAPISensible(
+    "chargerDemandesLiaisonDiscord",
+    {
+      utilisateur: utilisateurConnecte.joueur.pseudo,
+      motDePasse: motDePasseDemandesDiscord
+    },
+    function (data) {
+      if (!data.succes) return;
+      mettreAJourBadgeDemandesDiscord(filtrerDemandesLiaisonEnAttente(data.demandes || []).length);
+    }
+  );
+}
+
+function discordLieUtilisateurConnecte() {
+  const joueur = utilisateurConnecte?.joueur || {};
+  return Boolean(joueur.discordLieA || joueur.discordUsername || joueur.discordId);
+}
+
+function rendreSectionActionPrincipaleAccueil() {
+  return `
+    <section class="home-section">
+      <h3 class="home-section-title">Action principale</h3>
+      <button onclick="afficherCompetitionsJoueur()" class="home-primary-action">
+        Remplir mes présences
+      </button>
+    </section>
+  `;
+}
+
+function rendreSectionDiscordAccueil() {
+  const joueur = utilisateurConnecte?.joueur || {};
+  const discordLie = discordLieUtilisateurConnecte();
+  const discordUsername = joueur.discordUsername || "";
+  const statutTexte = discordLie ? "Discord lié" : "Discord non lié";
+  const detailTexte = discordLie && discordUsername
+    ? discordUsername
+    : "Associe ton compte Discord pour les rappels automatiques.";
+  const classeStatut = discordLie
+    ? "discord-status-text discord-status-text-linked"
+    : "discord-status-text discord-status-text-pending";
+
+  return `
+    <section class="home-section">
+      <h3 class="home-section-title">Compte Discord</h3>
+      <div class="home-card discord-status-card">
+        <div class="home-card-body">
+          <p class="${classeStatut}">${escapeHTML(statutTexte)}</p>
+          <p class="home-card-text">${escapeHTML(detailTexte)}</p>
+        </div>
+        <button onclick="afficherLiaisonDiscord()" class="secondary-button discord-link-button">
+          💬 Lier mon Discord
+        </button>
+      </div>
+    </section>
+  `;
+}
+
+function rendreSectionAdministrationAccueil() {
+  if (!estOfficierConnecte() && !estSuperAdminConnecte()) return "";
+
+  const actionDemandesDiscord = estSuperAdminConnecte()
+    ? `
+      <div class="home-card admin-action-card">
+        <div class="home-card-body">
+          <p class="home-card-title">Liaisons Discord</p>
+          <p class="home-card-text">Valider ou refuser les demandes en attente.</p>
+        </div>
+        ${rendreBoutonDemandesDiscordAccueil()}
+      </div>
+    `
+    : "";
+
+  return `
+    <section class="home-section">
+      <h3 class="home-section-title">Administration</h3>
+      <div class="home-action-grid">
+        <div class="home-card admin-action-card">
+          <div class="home-card-body">
+            <p class="home-card-title">Espace officier</p>
+            <p class="home-card-text">Consulter les présences et gérer les opérations.</p>
+          </div>
+          <button onclick="afficherEspaceOfficier()" class="secondary-button admin-action-button">
+            Ouvrir
+          </button>
+        </div>
+        ${actionDemandesDiscord}
+      </div>
+    </section>
+  `;
+}
+
+function rendreSectionCompteAccueil() {
+  const actionMotDePasse = estOfficierConnecte() || estSuperAdminConnecte()
+    ? `
+      <button onclick="afficherChangerMotDePasse()" class="secondary-button account-action-button">
+        Changer mon mot de passe
+      </button>
+    `
+    : "";
+
+  if (!actionMotDePasse) return "";
+
+  return `
+    <section class="home-section account-actions">
+      <h3 class="home-section-title">Compte / sécurité</h3>
+      ${actionMotDePasse}
+    </section>
+  `;
+}
+
+function rendreAccueilConnecteHTML() {
+  return `
+    <div class="form-zone home-screen">
+      <h2>Bonjour ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</h2>
+      ${rendreSectionActionPrincipaleAccueil()}
+      ${rendreSectionDiscordAccueil()}
+      ${rendreSectionAdministrationAccueil()}
+      ${rendreSectionCompteAccueil()}
+      <p class="small-link" onclick="deconnexion()">Déconnexion</p>
+    </div>
+  `;
+}
+
+function afficherAccueilJoueur() {
+  definirModeCarte("normal");
+  setContenu(rendreAccueilConnecteHTML());
 }
 
 function afficherChoixOfficier() {
   definirModeCarte("normal");
-  setContenu(`
-    <div class="form-zone">
-      <h2>Bonjour ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</h2>
-      <p>Que souhaites-tu faire ?</p>
-      <button onclick="afficherCompetitionsJoueur()">Remplir mes présences</button>
-      <button onclick="afficherEspaceOfficier()" class="secondary-button">Accéder à l’espace officier</button>
-	  <button onclick="afficherChangerMotDePasse()"
-class="secondary-button">
-🔑 Changer mon mot de passe
-</button>
-      <p class="small-link" onclick="deconnexion()">Déconnexion</p>
-    </div>
-  `);
+  setContenu(rendreAccueilConnecteHTML());
+
+  actualiserCompteurDemandesDiscordAccueil();
 }
 
 
@@ -234,13 +382,11 @@ function afficherCompetitionsJoueur() {
       html += `<p>Aucune compétition disponible.</p>`;
     }
 
-    if (estOfficierConnecte() || estSuperAdminConnecte()) {
-      html += `
-        <button onclick="afficherChoixOfficier()" class="secondary-button">
-          Retour à l’accueil
-        </button>
-      `;
-    }
+    html += `
+      <button onclick="retourAccueilConnecte()" class="secondary-button">
+        Retour à l’accueil
+      </button>
+    `;
 
     html += `<p class="small-link" onclick="deconnexion()">Déconnexion</p></div>`;
     setContenu(html);
@@ -492,6 +638,9 @@ function verifierAccesOfficier() {
       }
 
       accesOfficierValide = true;
+      if (estSuperAdminConnecte()) {
+        motDePasseDemandesDiscord = motDePasse;
+      }
       afficherChoixOfficier();
     })
     .catch(function (erreur) {
@@ -1673,6 +1822,18 @@ function afficherFormulaireAjoutJoueur() {
       </label>
     `
     : "";
+  const champDiscordId = estSuperAdminConnecte()
+    ? `
+      <label for="nouveauDiscordIdJoueur">ID Discord</label>
+      <input
+        type="text"
+        id="nouveauDiscordIdJoueur"
+        inputmode="numeric"
+        pattern="[0-9]*"
+        placeholder="Ex : 123456789012345678"
+      >
+    `
+    : "";
 
   setContenu(`
     <div class="form-zone">
@@ -1684,6 +1845,8 @@ function afficherFormulaireAjoutJoueur() {
         id="nouveauPseudoJoueur"
         placeholder="Ex : NouveauJoueur"
       >
+
+      ${champDiscordId}
 
       <label>Grades</label>
       <div class="roles-selection">
@@ -1753,13 +1916,29 @@ function recupererRolesJoueur(prefixe) {
   return roles;
 }
 
+function recupererDiscordIdJoueur(idChamp) {
+  const champ = document.getElementById(idChamp);
+  if (!champ) return "";
+
+  const discordId = champ.value.trim();
+
+  if (discordId && !/^\d+$/.test(discordId)) {
+    afficherMessageModal("Erreur", "L’ID Discord doit contenir uniquement des chiffres.");
+    return null;
+  }
+
+  return discordId;
+}
+
 function ajouterJoueurDepuisSite() {
   const pseudo = document.getElementById("nouveauPseudoJoueur").value.trim();
   const statut = document.getElementById("nouveauStatutJoueur").value;
   const roles = recupererRolesJoueur("joueur");
+  const discordId = recupererDiscordIdJoueur("nouveauDiscordIdJoueur");
+  if (discordId === null) return;
   if (!pseudo) return afficherMessageModal("Erreur", "Merci de saisir un pseudo.");
   if (roles.length === 0) return afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle.");
-  appelAPI("ajouterJoueur", { pseudo, roles: roles.join(","), statut, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
+  appelAPI("ajouterJoueur", { pseudo, roles: roles.join(","), statut, discordId, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
     if (!data.succes) return afficherMessageModal("Erreur", data.message);
     viderCacheFrontend();
     afficherMessageModal("Joueur ajouté", "Le joueur a bien été ajouté.", afficherGestionJoueurs);
@@ -1783,6 +1962,19 @@ function afficherFormulaireModificationJoueur(joueur) {
       </label>
     `
     : "";
+  const champDiscordId = estSuperAdminConnecte()
+    ? `
+      <label for="modifierDiscordIdJoueur">ID Discord</label>
+      <input
+        type="text"
+        id="modifierDiscordIdJoueur"
+        inputmode="numeric"
+        pattern="[0-9]*"
+        value="${escapeHTML(joueur.discordId || "")}"
+        placeholder="Ex : 123456789012345678"
+      >
+    `
+    : "";
 
   setContenu(`
     <div class="form-zone">
@@ -1794,6 +1986,8 @@ function afficherFormulaireModificationJoueur(joueur) {
         id="modifierPseudoJoueur"
         value="${escapeHTML(joueur.pseudo)}"
       >
+
+      ${champDiscordId}
 
       <label>Grades</label>
       <div class="roles-selection">
@@ -1875,9 +2069,11 @@ function modifierJoueurDepuisSite(idJoueur) {
   const pseudo = document.getElementById("modifierPseudoJoueur").value.trim();
   const statut = document.getElementById("modifierStatutJoueur").value;
   const roles = recupererRolesJoueur("modifier");
+  const discordId = recupererDiscordIdJoueur("modifierDiscordIdJoueur");
+  if (discordId === null) return;
   if (!pseudo) return afficherMessageModal("Erreur", "Merci de saisir un pseudo.");
   if (roles.length === 0) return afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle.");
-  appelAPI("modifierJoueur", { idJoueur, pseudo, roles: roles.join(","), statut, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
+  appelAPI("modifierJoueur", { idJoueur, pseudo, roles: roles.join(","), statut, discordId, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
     if (!data.succes) return afficherMessageModal("Erreur", data.message);
     viderCacheFrontend();
     afficherMessageModal("Joueur modifié", "Les informations du joueur ont bien été mises à jour.", afficherGestionJoueurs);
@@ -1995,6 +2191,336 @@ function supprimerJoueurDepuisSite(idJoueur) {
         "Joueur supprimé",
         escapeHTML(data.message),
         afficherGestionJoueurs
+      );
+    }
+  );
+}
+
+function afficherLiaisonDiscord() {
+  definirModeCarte("normal");
+
+  const joueur = utilisateurConnecte?.joueur || {};
+  const pseudo = joueur.pseudo || "";
+  const discordUsername = joueur.discordUsername || "";
+  const discordLieA = joueur.discordLieA || "";
+  const statutLiaison = discordLieA || discordUsername || joueur.discordId
+    ? `
+      <div class="discord-status-linked">
+        Discord lié${discordUsername ? " : " + escapeHTML(discordUsername) : ""}
+      </div>
+    `
+    : `
+      <div class="discord-status-pending">
+        Aucun Discord validé pour le moment.
+      </div>
+    `;
+
+  setContenu(`
+    <div class="form-zone">
+      <h2>Lier mon Discord</h2>
+
+      <div class="discord-link-box">
+        <p>Pseudo connecté : <strong>${escapeHTML(pseudo)}</strong></p>
+        ${statutLiaison}
+
+        <button onclick="genererCodeLiaisonDiscordDepuisSite()">
+          Générer un code de liaison Discord
+        </button>
+      </div>
+
+      <div id="zoneCodeLiaisonDiscord"></div>
+
+      <button onclick="retourAccueilConnecte()" class="secondary-button">
+        Retour à l’accueil
+      </button>
+    </div>
+  `);
+}
+
+function genererCodeLiaisonDiscordDepuisSite() {
+  const zone = document.getElementById("zoneCodeLiaisonDiscord");
+  const pseudo = utilisateurConnecte?.joueur?.pseudo || "";
+
+  if (!pseudo) {
+    return afficherMessageModal("Erreur", "Impossible d’identifier le joueur connecté.");
+  }
+
+  if (zone) {
+    zone.innerHTML = `
+      <div class="discord-link-box">
+        <p>Génération du code en cours...</p>
+      </div>
+    `;
+  }
+
+  appelAPI(
+    "genererCodeLiaisonDiscord",
+    { pseudo },
+    function (data) {
+      if (!data.succes) {
+        if (zone) {
+          zone.innerHTML = `<p class="error">${escapeHTML(data.message || "Impossible de générer le code.")}</p>`;
+        }
+        return;
+      }
+
+      const code = data.code ||
+        data.linkCode ||
+        data.link_code ||
+        data.discordCode ||
+        data.discord_link_code ||
+        data.codeLiaison ||
+        data.code_liaison ||
+        "";
+      const expiration = data.expiresAt || data.expires_at || data.expiration || data.expireA || "";
+      const expirationTexte = formaterDateHeureFrance(expiration);
+
+      if (!code) {
+        if (zone) {
+          zone.innerHTML = `<p class="error">Le code n’a pas été retourné par le serveur.</p>`;
+        }
+        return;
+      }
+
+      if (zone) {
+        zone.innerHTML = `
+          <div class="discord-link-box">
+            <h3>Code temporaire</h3>
+            <div class="discord-code-row">
+              <div class="discord-code-box">${escapeHTML(code)}</div>
+              <button
+                type="button"
+                class="discord-copy-button"
+                title="Copier le code"
+                aria-label="Copier le code"
+                onclick='copierCodeLiaisonDiscord(${JSON.stringify(code)})'>
+                📋
+              </button>
+            </div>
+            <p id="discordCodeCopyFeedback" class="discord-copy-feedback" hidden>Code copié</p>
+            <p>Expire le : <strong>${escapeHTML(expirationTexte)}</strong></p>
+            <ol class="discord-instructions">
+              <li>Va sur Discord.</li>
+              <li>Tape la commande <strong>/lier code: ${escapeHTML(code)}</strong>.</li>
+              <li>Attends la validation d’un officier.</li>
+            </ol>
+          </div>
+        `;
+      }
+    }
+  );
+}
+
+function copierCodeLiaisonDiscord(code) {
+  const texte = String(code || "");
+  const feedback = document.getElementById("discordCodeCopyFeedback");
+
+  function afficherRetourCopie() {
+    if (!feedback) return;
+    feedback.hidden = false;
+    clearTimeout(afficherRetourCopie.timeoutId);
+    afficherRetourCopie.timeoutId = setTimeout(function () {
+      feedback.hidden = true;
+    }, 2500);
+  }
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(texte)
+      .then(afficherRetourCopie)
+      .catch(function () {
+        copierTexteFallback(texte);
+        afficherRetourCopie();
+      });
+    return;
+  }
+
+  copierTexteFallback(texte);
+  afficherRetourCopie();
+}
+
+function copierTexteFallback(texte) {
+  const champTemporaire = document.createElement("textarea");
+  champTemporaire.value = texte;
+  champTemporaire.setAttribute("readonly", "readonly");
+  champTemporaire.style.position = "fixed";
+  champTemporaire.style.left = "-9999px";
+  document.body.appendChild(champTemporaire);
+  champTemporaire.select();
+  document.execCommand("copy");
+  champTemporaire.remove();
+}
+
+function afficherDemandesLiaisonDiscord() {
+  if (!estSuperAdminConnecte()) {
+    return afficherMessageModal("Accès refusé", "Seul un officier habilité peut gérer les liaisons Discord.");
+  }
+
+  definirModeCarte("large");
+  motDePasseDemandesDiscord = "";
+
+  setContenu(`
+    <div class="form-zone">
+      <h2>Liaisons Discord</h2>
+
+      <div class="discord-link-box">
+        <p>Entre le mot de passe administrateur pour charger les demandes en attente.</p>
+
+        <label for="motDePasseDemandesDiscord">Mot de passe administrateur</label>
+        <input
+          type="password"
+          id="motDePasseDemandesDiscord"
+          onkeydown="if(event.key==='Enter'){chargerDemandesLiaisonDiscordDepuisSite();}"
+        >
+
+        <button onclick="chargerDemandesLiaisonDiscordDepuisSite()">
+          Charger les demandes
+        </button>
+      </div>
+
+      <div id="zoneDemandesLiaisonDiscord"></div>
+
+      <button onclick="retourAccueilConnecte()" class="secondary-button">
+        Retour à l’accueil
+      </button>
+    </div>
+  `);
+}
+
+function chargerDemandesLiaisonDiscordDepuisSite() {
+  const champMotDePasse = document.getElementById("motDePasseDemandesDiscord");
+  const motDePasse = champMotDePasse?.value || motDePasseDemandesDiscord;
+  const zone = document.getElementById("zoneDemandesLiaisonDiscord");
+
+  if (!motDePasse) {
+    return afficherMessageModal("Erreur", "Merci de saisir le mot de passe administrateur.");
+  }
+
+  motDePasseDemandesDiscord = motDePasse;
+
+  if (zone) {
+    zone.innerHTML = `
+      <div class="discord-link-box">
+        <p>Chargement des demandes...</p>
+      </div>
+    `;
+  }
+
+  appelAPISensible(
+    "chargerDemandesLiaisonDiscord",
+    {
+      utilisateur: utilisateurConnecte.joueur.pseudo,
+      motDePasse: motDePasseDemandesDiscord
+    },
+    function (data) {
+      if (!data.succes) {
+        if (zone) {
+          zone.innerHTML = `<p class="error">${escapeHTML(data.message || "Impossible de charger les demandes.")}</p>`;
+        }
+        return;
+      }
+
+      const demandesEnAttente = filtrerDemandesLiaisonEnAttente(data.demandes || []);
+      mettreAJourBadgeDemandesDiscord(demandesEnAttente.length);
+      afficherListeDemandesLiaisonDiscord(demandesEnAttente);
+    }
+  );
+}
+
+function afficherListeDemandesLiaisonDiscord(demandes) {
+  const zone = document.getElementById("zoneDemandesLiaisonDiscord");
+  if (!zone) return;
+
+  if (!demandes || demandes.length === 0) {
+    zone.innerHTML = `
+      <div class="discord-link-box">
+        <p>Aucune demande de liaison Discord en attente.</p>
+      </div>
+    `;
+    return;
+  }
+
+  zone.innerHTML = demandes.map(function (demande) {
+    const idDemande = String(valeurDemandeDiscord(demande, ["id", "idDemande", "request_id"]));
+    const pseudo = valeurDemandeDiscord(demande, ["pseudo", "joueur_pseudo", "joueurPseudo"], "-");
+    const discordUsername = valeurDemandeDiscord(
+      demande,
+      ["discordUsername", "discord_username", "username", "global_name"],
+      "Utilisateur Discord"
+    );
+    const dateDemande = valeurDemandeDiscord(demande, ["createdAt", "created_at", "usedAt", "used_at"]);
+    const expiration = valeurDemandeDiscord(demande, ["expiresAt", "expires_at", "expiration"]);
+
+    return `
+      <div class="discord-request-card">
+        <h3>${escapeHTML(pseudo)}</h3>
+        <p>Discord : <strong>${escapeHTML(discordUsername)}</strong></p>
+        <p>Demande : ${escapeHTML(formaterDateHeureFrance(dateDemande))}</p>
+        <p>Expiration du code : ${escapeHTML(formaterDateHeureFrance(expiration))}</p>
+        <div class="discord-request-actions">
+          <button onclick='validerDemandeLiaisonDiscordDepuisSite(${JSON.stringify(idDemande)})'>
+            Valider
+          </button>
+          <button class="danger-button" onclick='refuserDemandeLiaisonDiscordDepuisSite(${JSON.stringify(idDemande)})'>
+            Refuser
+          </button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function validerDemandeLiaisonDiscordDepuisSite(idDemande) {
+  if (!motDePasseDemandesDiscord) {
+    return afficherMessageModal("Erreur", "Merci de charger les demandes avec le mot de passe administrateur.");
+  }
+
+  afficherConfirmation(
+    "Valider la liaison Discord ?",
+    "Cette action associera le Discord au joueur concerné.",
+    function () {
+      appelAPISensible(
+        "validerDemandeLiaisonDiscord",
+        {
+          idDemande,
+          utilisateur: utilisateurConnecte.joueur.pseudo,
+          motDePasse: motDePasseDemandesDiscord
+        },
+        function (data) {
+          if (!data.succes) {
+            return afficherMessageModal("Erreur", data.message || "Impossible de valider la demande.");
+          }
+
+          afficherMessageModal("Liaison validée", escapeHTML(data.message || "La liaison Discord a été validée."), chargerDemandesLiaisonDiscordDepuisSite);
+        }
+      );
+    }
+  );
+}
+
+function refuserDemandeLiaisonDiscordDepuisSite(idDemande) {
+  if (!motDePasseDemandesDiscord) {
+    return afficherMessageModal("Erreur", "Merci de charger les demandes avec le mot de passe administrateur.");
+  }
+
+  afficherConfirmation(
+    "Refuser la liaison Discord ?",
+    "Cette action refusera la demande sans modifier le joueur.",
+    function () {
+      appelAPISensible(
+        "refuserDemandeLiaisonDiscord",
+        {
+          idDemande,
+          utilisateur: utilisateurConnecte.joueur.pseudo,
+          motDePasse: motDePasseDemandesDiscord,
+          raison: ""
+        },
+        function (data) {
+          if (!data.succes) {
+            return afficherMessageModal("Erreur", data.message || "Impossible de refuser la demande.");
+          }
+
+          afficherMessageModal("Liaison refusée", escapeHTML(data.message || "La demande de liaison Discord a été refusée."), chargerDemandesLiaisonDiscordDepuisSite);
+        }
       );
     }
   );
@@ -2407,6 +2933,28 @@ function appelAPI(action, parametres, callback) {
   apiSupabase(action, parametres || {})
     .then(function (reponse) {
       const duree = Math.round(performance.now() - debut);
+      console.log("SUPABASE ✅", action, duree + " ms", "réponse sensible masquée");
+      callback(reponse);
+    })
+    .catch(function (erreur) {
+      console.error("SUPABASE ❌", action, erreur);
+
+      callback({
+        succes: false,
+        message: "Erreur Supabase.",
+        details: erreur.message || String(erreur)
+      });
+    });
+}
+
+function appelAPISensible(action, parametres, callback) {
+  const debut = performance.now();
+
+  console.log("SUPABASE ▶️", action, "paramètres sensibles masqués");
+
+  apiSupabase(action, parametres || {})
+    .then(function (reponse) {
+      const duree = Math.round(performance.now() - debut);
       console.log("SUPABASE ✅", action, duree + " ms", reponse);
       callback(reponse);
     })
@@ -2419,6 +2967,51 @@ function appelAPI(action, parametres, callback) {
         details: erreur.message || String(erreur)
       });
     });
+}
+
+function formaterDateHeureFrance(valeur) {
+  if (!valeur) return "-";
+
+  const date = new Date(valeur);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  const parties = new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Europe/Paris",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const valeurs = {};
+
+  parties.forEach(function (partie) {
+    valeurs[partie.type] = partie.value;
+  });
+
+  return `${valeurs.day}/${valeurs.month}/${valeurs.year} - ${valeurs.hour}:${valeurs.minute}:${valeurs.second}`;
+}
+
+function valeurDemandeDiscord(demande, cles, valeurDefaut = "") {
+  for (const cle of cles) {
+    if (demande && demande[cle] !== undefined && demande[cle] !== null && demande[cle] !== "") {
+      return demande[cle];
+    }
+  }
+
+  return valeurDefaut;
+}
+
+function filtrerDemandesLiaisonEnAttente(demandes) {
+  return (demandes || []).filter(function (demande) {
+    const statut = String(valeurDemandeDiscord(demande, ["statut", "status"], ""))
+      .trim()
+      .toLowerCase();
+
+    return !statut || statut === "en_attente_validation" || statut === "pending";
+  });
 }
 
 

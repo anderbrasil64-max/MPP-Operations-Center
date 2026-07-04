@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.7.1 - Migration complète Supabase
+   Version Alpha 0.9.0 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -22,6 +22,12 @@ const sbCacheNomsCompetitions = {};
 
 function sbTexte(valeur) {
   return String(valeur ?? "").trim();
+}
+
+function sbDiscordId(valeur) {
+  const texte = sbTexte(valeur);
+  if (!texte) return "";
+  return /^\d+$/.test(texte) ? texte : null;
 }
 
 function sbCle(valeur) {
@@ -149,6 +155,9 @@ function sbJoueurObj(joueur) {
     pseudo: joueur.pseudo,
     roles: joueur.roles,
     statut: joueur.statut,
+    discordId: joueur.discord_id || "",
+    discordUsername: joueur.discord_username || "",
+    discordLieA: joueur.discord_lie_a || "",
     dateAjout: joueur.date_ajout,
     derniereConnexion: joueur.derniere_connexion,
     derniereModification: joueur.derniere_modification
@@ -417,7 +426,8 @@ async function apiSupabase(action, parametres) {
         parametres.pseudo,
         parametres.roles,
         parametres.statut,
-        parametres.utilisateur
+        parametres.utilisateur,
+        parametres.discordId
       );
 
     case "modifierJoueur":
@@ -426,7 +436,32 @@ async function apiSupabase(action, parametres) {
         parametres.pseudo,
         parametres.roles,
         parametres.statut,
-        parametres.utilisateur
+        parametres.utilisateur,
+        parametres.discordId
+      );
+
+    case "genererCodeLiaisonDiscord":
+      return genererCodeLiaisonDiscordSupabase(parametres.pseudo);
+
+    case "chargerDemandesLiaisonDiscord":
+      return chargerDemandesLiaisonDiscordSupabase(
+        parametres.utilisateur,
+        parametres.motDePasse
+      );
+
+    case "validerDemandeLiaisonDiscord":
+      return validerDemandeLiaisonDiscordSupabase(
+        parametres.idDemande,
+        parametres.utilisateur,
+        parametres.motDePasse
+      );
+
+    case "refuserDemandeLiaisonDiscord":
+      return refuserDemandeLiaisonDiscordSupabase(
+        parametres.idDemande,
+        parametres.utilisateur,
+        parametres.motDePasse,
+        parametres.raison
       );
 
     case "supprimerJoueur":
@@ -461,6 +496,106 @@ async function apiSupabase(action, parametres) {
     default:
       return sbErreur("Action Supabase inconnue : " + action);
   }
+}
+
+function sbNormaliserReponseEdgeFunction(data, messageDefaut) {
+  const reponse = { ...(data || {}) };
+
+  if (reponse.succes === false || reponse.success === false) {
+    return sbErreur(
+      reponse.message || reponse.error || "Erreur Edge Function.",
+      reponse.details || ""
+    );
+  }
+
+  reponse.succes = true;
+  if (!reponse.message && messageDefaut) {
+    reponse.message = messageDefaut;
+  }
+
+  return reponse;
+}
+
+function sbListeDemandesDiscord(data) {
+  return data?.demandes ||
+    data?.demandesEnAttente ||
+    data?.requests ||
+    data?.data ||
+    [];
+}
+
+async function genererCodeLiaisonDiscordSupabase(pseudo) {
+  const { data, error } = await supabaseClient.functions.invoke(
+    "discord-link-code",
+    {
+      body: {
+        pseudo: sbTexte(pseudo)
+      }
+    }
+  );
+
+  if (error) return sbErreur(error.message);
+
+  return sbNormaliserReponseEdgeFunction(data, "Code de liaison Discord généré.");
+}
+
+async function chargerDemandesLiaisonDiscordSupabase(utilisateur, motDePasse) {
+  const { data, error } = await supabaseClient.functions.invoke(
+    "discord-link-admin",
+    {
+      body: {
+        action: "lister",
+        utilisateur: sbTexte(utilisateur),
+        motDePasse: sbTexte(motDePasse)
+      }
+    }
+  );
+
+  if (error) return sbErreur(error.message);
+
+  const reponse = sbNormaliserReponseEdgeFunction(data, "Demandes chargées.");
+  if (reponse.succes) {
+    reponse.demandes = sbListeDemandesDiscord(data);
+  }
+
+  return reponse;
+}
+
+async function validerDemandeLiaisonDiscordSupabase(idDemande, utilisateur, motDePasse) {
+  const { data, error } = await supabaseClient.functions.invoke(
+    "discord-link-admin",
+    {
+      body: {
+        action: "valider",
+        idDemande: sbTexte(idDemande),
+        utilisateur: sbTexte(utilisateur),
+        motDePasse: sbTexte(motDePasse)
+      }
+    }
+  );
+
+  if (error) return sbErreur(error.message);
+
+  return sbNormaliserReponseEdgeFunction(data, "Demande de liaison validée.");
+}
+
+async function refuserDemandeLiaisonDiscordSupabase(idDemande, utilisateur, motDePasse, raison) {
+  const { data, error } = await supabaseClient.functions.invoke(
+    "discord-link-admin",
+    {
+      body: {
+        action: "refuser",
+        idDemande: sbTexte(idDemande),
+        utilisateur: sbTexte(utilisateur),
+        motDePasse: sbTexte(motDePasse),
+        raison: sbTexte(raison)
+      }
+    }
+  );
+
+  if (error) return sbErreur(error.message);
+
+  return sbNormaliserReponseEdgeFunction(data, "Demande de liaison refusée.");
 }
 
 /* ==========================================================
@@ -524,10 +659,12 @@ async function chargerJoueursSupabase() {
   };
 }
 
-async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur) {
+async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur, discordId) {
+
+  const utilisateurSuperAdmin = await sbUtilisateurEstSuperAdmin(utilisateur);
 
   if (
-    !sbEstSuperAdminPseudo(utilisateur) &&
+    !utilisateurSuperAdmin &&
     !(await sbUtilisateurEstOfficier(utilisateur))
   ) {
     return sbErreur(
@@ -539,31 +676,51 @@ async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur) {
 
   if (
     rolesDemandes.toLowerCase().includes("superadmin") &&
-    !sbEstSuperAdminPseudo(utilisateur)
+    !utilisateurSuperAdmin
   ) {
     return sbErreur(
       "Accès refusé : seul un Super Admin peut attribuer le rôle SuperAdmin."
     );
   }
 
+  const discordIdNettoye = utilisateurSuperAdmin ? sbDiscordId(discordId) : "";
+
+  if (discordIdNettoye === null) {
+    return sbErreur("L’ID Discord doit contenir uniquement des chiffres.");
+  }
+
+  const donneesJoueur = {
+    pseudo: sbTexte(pseudo),
+    roles: rolesDemandes || "Soldat",
+    statut: sbTexte(statut) || "Actif"
+  };
+
+  if (utilisateurSuperAdmin) {
+    donneesJoueur.discord_id = discordIdNettoye || null;
+  }
+
   const { data, error } = await supabaseClient
     .from("joueurs")
-    .insert([{
-      pseudo: sbTexte(pseudo),
-      roles: rolesDemandes || "Soldat",
-      statut: sbTexte(statut) || "Actif"
-    }])
+    .insert([donneesJoueur])
     .select()
     .single();
 
   if (error) return sbErreur(error.message);
 
+  const detailsAjout = [
+    "Joueur : " + sbTexte(pseudo),
+    "Rôles : " + (rolesDemandes || "Soldat"),
+    "Statut : " + (sbTexte(statut) || "Actif")
+  ];
+
+  if (discordIdNettoye) {
+    detailsAjout.push("ID Discord : ajouté");
+  }
+
   await sbJournaliser(
     utilisateur,
     "Joueur ajouté",
-    "Joueur : " + sbTexte(pseudo) +
-      "\nRôles : " + (rolesDemandes || "Soldat") +
-      "\nStatut : " + (sbTexte(statut) || "Actif")
+    detailsAjout.join("\n")
   );
 
   return {
@@ -578,11 +735,14 @@ async function modifierJoueurSupabase(
   pseudo,
   roles,
   statut,
-  utilisateur
+  utilisateur,
+  discordId
 ) {
 
+  const utilisateurSuperAdmin = await sbUtilisateurEstSuperAdmin(utilisateur);
+
   if (
-    !sbEstSuperAdminPseudo(utilisateur) &&
+    !utilisateurSuperAdmin &&
     !(await sbUtilisateurEstOfficier(utilisateur))
   ) {
     return sbErreur(
@@ -594,7 +754,7 @@ async function modifierJoueurSupabase(
 
   if (
     rolesDemandes.toLowerCase().includes("superadmin") &&
-    !sbEstSuperAdminPseudo(utilisateur)
+    !utilisateurSuperAdmin
   ) {
     return sbErreur(
       "Accès refusé : seul un Super Admin peut attribuer le rôle SuperAdmin."
@@ -616,15 +776,26 @@ async function modifierJoueurSupabase(
   const joueurExistant = joueursExistants[0];
   const nouveauPseudo = sbTexte(pseudo);
   const nouveauStatut = sbTexte(statut);
+  const nouveauDiscordId = utilisateurSuperAdmin ? sbDiscordId(discordId) : "";
+
+  if (nouveauDiscordId === null) {
+    return sbErreur("L’ID Discord doit contenir uniquement des chiffres.");
+  }
+
+  const donneesModification = {
+    pseudo: nouveauPseudo,
+    roles: rolesDemandes,
+    statut: nouveauStatut,
+    derniere_modification: new Date().toISOString()
+  };
+
+  if (utilisateurSuperAdmin) {
+    donneesModification.discord_id = nouveauDiscordId || null;
+  }
 
   const { error } = await supabaseClient
     .from("joueurs")
-    .update({
-      pseudo: nouveauPseudo,
-      roles: rolesDemandes,
-      statut: nouveauStatut,
-      derniere_modification: new Date().toISOString()
-    })
+    .update(donneesModification)
     .eq("id", Number(idJoueur));
 
   if (error) return sbErreur(error.message);
@@ -641,6 +812,18 @@ async function modifierJoueurSupabase(
 
   if (sbTexte(joueurExistant.statut) !== nouveauStatut) {
     changements.push("Statut : " + (sbTexte(joueurExistant.statut) || "-") + " → " + (nouveauStatut || "-"));
+  }
+
+  if (utilisateurSuperAdmin && sbTexte(joueurExistant.discord_id) !== nouveauDiscordId) {
+    const ancienDiscordId = sbTexte(joueurExistant.discord_id);
+
+    if (!ancienDiscordId && nouveauDiscordId) {
+      changements.push("ID Discord : ajouté");
+    } else if (ancienDiscordId && !nouveauDiscordId) {
+      changements.push("ID Discord : supprimé");
+    } else {
+      changements.push("ID Discord : modifié");
+    }
   }
 
   if (changements.length > 0) {
