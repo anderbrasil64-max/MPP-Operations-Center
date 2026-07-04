@@ -20,6 +20,11 @@ let journalActiviteFiltres = {
   utilisateurs: new Set(),
   actions: new Set()
 };
+let journalActiviteValeursFiltres = {
+  dates: [],
+  utilisateurs: [],
+  actions: []
+};
 
 const DUREE_CACHE_FRONT_MS = 5 * 60 * 1000;
 
@@ -2041,22 +2046,27 @@ function comparerDatesJournal(a, b) {
 }
 
 function valeursJournal(cle) {
-  const propriete = {
-    dates: "dateFiltre",
-    utilisateurs: "utilisateur",
-    actions: "action"
-  }[cle];
+  return journalActiviteValeursFiltres[cle] || [];
+}
 
-  const valeurs = Array.from(new Set(
-    journalActiviteEntrees.map(function (entree) {
-      return entree[propriete] || "-";
+function calculerValeursFiltresJournal(entrees) {
+  function valeursUniques(propriete) {
+    return Array.from(new Set(
+      (entrees || []).map(function (entree) {
+        return entree[propriete] || "-";
+      })
+    ));
+  }
+
+  return {
+    dates: valeursUniques("dateFiltre").sort(comparerDatesJournal),
+    utilisateurs: valeursUniques("utilisateur").sort(function (a, b) {
+      return String(a).localeCompare(String(b), "fr", { sensitivity: "base" });
+    }),
+    actions: valeursUniques("action").sort(function (a, b) {
+      return String(a).localeCompare(String(b), "fr", { sensitivity: "base" });
     })
-  ));
-
-  if (cle === "dates") return valeurs.sort(comparerDatesJournal);
-  return valeurs.sort(function (a, b) {
-    return String(a).localeCompare(String(b), "fr", { sensitivity: "base" });
-  });
+  };
 }
 
 function preparerEntreesJournal(journal) {
@@ -2227,6 +2237,7 @@ function afficherJournalActivite() {
     if (!data.succes) return afficherMessageModal("Erreur", data.message);
 
     journalActiviteEntrees = preparerEntreesJournal(data.journal);
+    journalActiviteValeursFiltres = calculerValeursFiltresJournal(journalActiviteEntrees);
     initialiserFiltresJournal();
 
     let html = `

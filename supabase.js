@@ -197,6 +197,54 @@ async function sbNomCompetitionDepuisId(idCompetition) {
   return sbCacheNomsCompetitions[idComp];
 }
 
+function sbExtraireIdsCompetitionsJournal(lignesJournal) {
+  const idsCompetition = new Set();
+
+  (lignesJournal || []).forEach(function (ligne) {
+    const details = sbTexte(ligne.details);
+
+    for (const match of details.matchAll(/Compétition ID\s+(\d+)/gi)) {
+      idsCompetition.add(Number(match[1]));
+    }
+  });
+
+  return Array.from(idsCompetition).filter(Boolean);
+}
+
+async function sbChargerNomsCompetitionsJournal(idsCompetition) {
+  const idsACharger = Array.from(new Set(
+    (idsCompetition || [])
+      .map(Number)
+      .filter(Boolean)
+      .filter(function (idCompetition) {
+        return !sbCacheNomsCompetitions[idCompetition];
+      })
+  ));
+
+  if (idsACharger.length === 0) {
+    return;
+  }
+
+  const { data, error } = await supabaseClient
+    .from("competitions")
+    .select("id,nom")
+    .in("id", idsACharger);
+
+  if (error) {
+    return;
+  }
+
+  (data || []).forEach(function (competition) {
+    sbCacheNomsCompetitions[Number(competition.id)] = competition.nom || "Compétition inconnue";
+  });
+
+  idsACharger.forEach(function (idCompetition) {
+    if (!sbCacheNomsCompetitions[idCompetition]) {
+      sbCacheNomsCompetitions[idCompetition] = "Compétition inconnue";
+    }
+  });
+}
+
 function sbStatutPresenceLisible(statut) {
   const statutNormalise = sbNormaliserStatut(statut);
 
@@ -264,7 +312,7 @@ function sbActionJournalLisible(action) {
   return actions[actionTexte] || actionTexte;
 }
 
-async function sbDetailsJournalLisibles(details) {
+function sbDetailsJournalLisibles(details) {
   let texte = sbTexte(details);
   if (!texte) return "";
 
@@ -282,7 +330,7 @@ async function sbDetailsJournalLisibles(details) {
   }
 
   for (const idCompetition of idsCompetition) {
-    const nomCompetition = await sbNomCompetitionDepuisId(idCompetition);
+    const nomCompetition = sbCacheNomsCompetitions[Number(idCompetition)] || "Compétition inconnue";
     texte = texte.replace(
       new RegExp("Compétition ID\\s+" + idCompetition, "gi"),
       "Compétition : " + nomCompetition
@@ -1401,22 +1449,26 @@ async function chargerDonneesOfficierInitialesSupabase() {
 async function chargerJournalActiviteSupabase() {
   const { data, error } = await supabaseClient
     .from("journal_activite")
-    .select("*")
+    .select("date_heure,utilisateur,action,details")
     .order("date_heure", { ascending: false })
     .limit(50);
 
   if (error) return sbErreur(error.message);
 
-  const journal = await Promise.all((data || []).map(async function (ligne) {
+  const lignesJournal = data || [];
+  const idsCompetition = sbExtraireIdsCompetitionsJournal(lignesJournal);
+  await sbChargerNomsCompetitionsJournal(idsCompetition);
+
+  const journal = lignesJournal.map(function (ligne) {
     return {
       dateHeure: ligne.date_heure
         ? new Date(ligne.date_heure).toLocaleString("fr-FR")
         : "",
       utilisateur: ligne.utilisateur,
       action: sbActionJournalLisible(ligne.action),
-      details: await sbDetailsJournalLisibles(ligne.details)
+      details: sbDetailsJournalLisibles(ligne.details)
     };
-  }));
+  });
 
   return {
     succes: true,
