@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.11.0 - Migration complète Supabase
+   Version Alpha 0.11.2 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -639,7 +639,8 @@ async function apiSupabase(action, parametres) {
     case "supprimerJoueur":
       return supprimerJoueurSupabase(
         parametres.idJoueur,
-        parametres.utilisateur
+        parametres.utilisateur,
+        parametres.motDePasse
       );
 
     case "ajouterDateCompetition":
@@ -1014,11 +1015,16 @@ async function modifierJoueurSupabase(
   };
 }
 
-async function supprimerJoueurSupabase(idJoueur, utilisateur) {
+async function supprimerJoueurSupabase(idJoueur, utilisateur, motDePasse) {
   const utilisateurTexte = sbTexte(utilisateur);
+  const motDePasseTexte = String(motDePasse || "");
 
   if (!(await sbUtilisateurEstSuperAdmin(utilisateurTexte))) {
     return sbErreur("Accès refusé : seul un SuperAdmin peut supprimer un joueur.");
+  }
+
+  if (!motDePasseTexte) {
+    return sbErreur("Mot de passe SuperAdmin requis pour supprimer un joueur.");
   }
 
   const { data: joueurs, error: erreurJoueur } = await supabaseClient
@@ -1048,39 +1054,42 @@ async function supprimerJoueurSupabase(idJoueur, utilisateur) {
     return sbErreur("Impossible de supprimer votre propre compte.");
   }
 
-  const { count: nbPresences, error: erreurComptage } = await supabaseClient
-    .from("presences")
-    .select("id", { count: "exact", head: true })
-    .eq("pseudo", pseudoJoueur);
-
-  if (erreurComptage) return sbErreur(erreurComptage.message);
-
-  const { error: erreurPresences } = await supabaseClient
-    .from("presences")
-    .delete()
-    .eq("pseudo", pseudoJoueur);
-
-  if (erreurPresences) return sbErreur(erreurPresences.message);
-
-  const { error: erreurSuppression } = await supabaseClient
-    .from("joueurs")
-    .delete()
-    .eq("id", Number(idJoueur));
-
-  if (erreurSuppression) return sbErreur(erreurSuppression.message);
-
-  await sbJournaliser(
-    utilisateurTexte,
-    "Joueur supprimé",
-    "Joueur : " + pseudoJoueur +
-      "\nPrésences supprimées : " + (nbPresences || 0)
+  const { data: resultatRPC, error: erreurRPC } = await supabaseClient.rpc(
+    "supprimer_joueur_site",
+    {
+      p_id_joueur: Number(idJoueur),
+      p_utilisateur: utilisateurTexte,
+      p_mot_de_passe: motDePasseTexte
+    }
   );
+
+  if (erreurRPC) {
+    return sbErreur(
+      "Suppression impossible côté base : " + erreurRPC.message +
+        ". Vérifiez que la fonction SQL supprimer_joueur_site est installée dans Supabase."
+    );
+  }
+
+  const resultat = Array.isArray(resultatRPC)
+    ? resultatRPC[0]
+    : resultatRPC;
+
+  if (!resultat || resultat.succes !== true) {
+    return sbErreur(
+      resultat?.message ||
+        "La suppression du joueur n'a pas pu être confirmée côté base."
+    );
+  }
 
   return {
     succes: true,
-    message: "Joueur supprimé. Présences supprimées : " + (nbPresences || 0) + ".",
-    pseudo: pseudoJoueur,
-    nbPresencesSupprimees: nbPresences || 0
+    message: resultat.message ||
+      "Joueur supprimé. Présences supprimées : " +
+        Number(resultat.nbPresencesSupprimees || 0) +
+        ".",
+    pseudo: resultat.pseudo || pseudoJoueur,
+    nbPresencesSupprimees: Number(resultat.nbPresencesSupprimees || 0),
+    nbDemandesDiscordSupprimees: Number(resultat.nbDemandesDiscordSupprimees || 0)
   };
 }
 

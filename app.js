@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.11.0 - Supabase
+   Version Alpha 0.11.2 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.11.0 - Supabase";
+const VERSION_SITE = "Alpha 0.11.2 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -2946,17 +2946,30 @@ function supprimerJoueurDepuisSite(idJoueur) {
     return afficherMessageModal("Accès refusé", "Seul un SuperAdmin peut supprimer un joueur.");
   }
 
+  if (!motDePasseDemandesDiscord) {
+    return afficherMessageModal(
+      "Mot de passe requis",
+      "Merci de valider l'accès SuperAdmin avant de supprimer un joueur.",
+      afficherDemandeMotDePasseOfficier
+    );
+  }
+
   afficherChargement("Suppression du joueur", "Suppression du joueur et de ses présences...");
 
   appelAPI(
     "supprimerJoueur",
     {
       idJoueur,
-      utilisateur: utilisateurConnecte.joueur.pseudo
+      utilisateur: utilisateurConnecte.joueur.pseudo,
+      motDePasse: motDePasseDemandesDiscord
     },
     function (data) {
       if (!data.succes) {
-        return afficherMessageModal("Erreur", data.message);
+        return afficherMessageModal(
+          "Erreur",
+          escapeHTML(data.message || "La suppression du joueur a échoué."),
+          afficherGestionJoueurs
+        );
       }
 
       viderCacheFrontend();
@@ -4652,6 +4665,29 @@ function formaterDerniereConnexionJoueur(valeur) {
   return `${valeurs.day}/${valeurs.month}/${valeurs.year} - ${valeurs.hour}:${valeurs.minute}:${valeurs.second}`;
 }
 
+function joueurDiscordLieGestion(joueur) {
+  return Boolean(joueur?.discordLieA || joueur?.discordUsername || joueur?.discordId);
+}
+
+function rendrePseudoGestionJoueur(joueur) {
+  const pseudo = escapeHTML(joueur?.pseudo || "-");
+
+  if (!joueurDiscordLieGestion(joueur)) {
+    return pseudo;
+  }
+
+  const titre = joueur.discordUsername
+    ? "Discord lié : " + joueur.discordUsername
+    : "Discord lié";
+
+  return `
+    <span class="players-pseudo-with-discord">
+      <span>${pseudo}</span>
+      <span class="players-discord-badge" title="${escapeHTML(titre)}" aria-label="${escapeHTML(titre)}">D</span>
+    </span>
+  `;
+}
+
 function afficherTableauGestionJoueurs(joueurs) {
   const zone = document.getElementById("zoneTableauJoueurs");
 
@@ -4700,7 +4736,7 @@ function afficherTableauGestionJoueurs(joueurs) {
 
     html += `
       <tr>
-        <td>${escapeHTML(joueur.pseudo)}</td>
+        <td>${rendrePseudoGestionJoueur(joueur)}</td>
         <td>${escapeHTML(joueur.roles || "-")}</td>
         <td>${escapeHTML(statutJoueur)}</td>
         <td class="players-last-login">${escapeHTML(formaterDerniereConnexionJoueur(joueur.derniereConnexion))}</td>
