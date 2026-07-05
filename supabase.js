@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.9.0 - Migration complète Supabase
+   Version Alpha 0.10.0 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -28,6 +28,16 @@ function sbDiscordId(valeur) {
   const texte = sbTexte(valeur);
   if (!texte) return "";
   return /^\d+$/.test(texte) ? texte : null;
+}
+
+function sbHeureHHMM(valeur) {
+  const match = sbTexte(valeur).match(/^([01]\d|2[0-3]):([0-5]\d)/);
+  return match ? match[1] + ":" + match[2] : "";
+}
+
+function sbHeureRappelPresenceOuNull(rappelActif, heure) {
+  if (!rappelActif) return null;
+  return sbHeureHHMM(heure) || null;
 }
 
 function sbCle(valeur) {
@@ -145,7 +155,10 @@ function sbCompetitionObj(competition) {
     dernierTraitementAuto: competition.dernier_traitement_auto || "",
 
     notificationPresenceActive: competition.notification_presence_active || false,
-    heureNotificationPresence: competition.heure_notification_presence || ""
+    heureNotificationPresence: sbHeureHHMM(competition.heure_notification_presence),
+
+    rappelPresenceActive: competition.rappel_presence_active || false,
+    heureRappelPresence: sbHeureHHMM(competition.heure_rappel_presence)
   };
 }
 
@@ -1160,6 +1173,16 @@ async function creerCompetitionCompleteSupabase(config, utilisateur) {
     );
   }
 
+  const rappelPresenceActive = !!config.rappelPresenceActive;
+  const heureRappelPresence = sbHeureRappelPresenceOuNull(
+    rappelPresenceActive,
+    config.heureRappelPresence
+  );
+
+  if (rappelPresenceActive && !heureRappelPresence) {
+    return sbErreur("Merci de renseigner une heure de rappel Discord des présences.");
+  }
+
   const { data: competition, error } = await supabaseClient
     .from("competitions")
     .insert([{
@@ -1174,7 +1197,10 @@ async function creerCompetitionCompleteSupabase(config, utilisateur) {
       heure_fermeture: config.heureFermetureAuto || null,
 
       notification_presence_active: !!config.notificationPresenceActive,
-      heure_notification_presence: config.heureNotificationPresence || null
+      heure_notification_presence: config.heureNotificationPresence || null,
+
+      rappel_presence_active: rappelPresenceActive,
+      heure_rappel_presence: heureRappelPresence
     }])
     .select()
     .single();
@@ -1211,7 +1237,9 @@ async function creerCompetitionCompleteSupabase(config, utilisateur) {
       "\nFermeture auto : " +
       (config.fermetureAutoActive ? "Oui" : "Non") +
       "\nNotification présences : " +
-      (config.notificationPresenceActive ? "Oui" : "Non")
+      (config.notificationPresenceActive ? "Oui" : "Non") +
+      "\nRappel sans réponse : " +
+      (rappelPresenceActive ? "Oui à " + heureRappelPresence : "Non")
   );
 
   return {
@@ -1520,15 +1548,19 @@ async function chargerJoueursSansReponseSupabase(idCompetition) {
 
   const { data, error } = await supabaseClient
     .from("presences")
-    .select("pseudo")
+    .select("pseudo,statut")
     .eq("competition_id", Number(idCompetition));
 
   if (error) return sbErreur(error.message);
 
   const repondants = new Set(
-    (data || []).map(function (presence) {
-      return sbCle(presence.pseudo);
-    })
+    (data || [])
+      .filter(function (presence) {
+        return sbPresenceEstRenseignee(presence.statut);
+      })
+      .map(function (presence) {
+        return sbCle(presence.pseudo);
+      })
   );
 
   const joueursSansReponse = joueursResultat.joueurs
@@ -1868,6 +1900,16 @@ async function modifierCompetitionCompleteSupabase(config, utilisateur) {
     );
   }
 
+  const rappelPresenceActive = !!config.rappelPresenceActive;
+  const heureRappelPresence = sbHeureRappelPresenceOuNull(
+    rappelPresenceActive,
+    config.heureRappelPresence
+  );
+
+  if (rappelPresenceActive && !heureRappelPresence) {
+    return sbErreur("Merci de renseigner une heure de rappel Discord des présences.");
+  }
+
   const { error } = await supabaseClient
     .from("competitions")
     .update({
@@ -1881,7 +1923,10 @@ async function modifierCompetitionCompleteSupabase(config, utilisateur) {
       heure_fermeture: config.heureFermetureAuto || null,
 
       notification_presence_active: !!config.notificationPresenceActive,
-      heure_notification_presence: config.heureNotificationPresence || null
+      heure_notification_presence: config.heureNotificationPresence || null,
+
+      rappel_presence_active: rappelPresenceActive,
+      heure_rappel_presence: heureRappelPresence
     })
     .eq("id", Number(config.idCompetition));
 
@@ -1899,7 +1944,9 @@ async function modifierCompetitionCompleteSupabase(config, utilisateur) {
       "\nFermeture auto : " +
       (config.fermetureAutoActive ? "Oui" : "Non") +
       "\nNotification présences : " +
-      (config.notificationPresenceActive ? "Oui" : "Non")
+      (config.notificationPresenceActive ? "Oui" : "Non") +
+      "\nRappel sans réponse : " +
+      (rappelPresenceActive ? "Oui à " + heureRappelPresence : "Non")
   );
 
   return {

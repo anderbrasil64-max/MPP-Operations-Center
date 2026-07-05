@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.9.0 - Supabase
+   Version Alpha 0.10.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.9.0 - Supabase";
+const VERSION_SITE = "Alpha 0.10.0 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -34,6 +34,8 @@ let triGestionJoueurs = {
 let filtresStatutGestionJoueurs = new Set(STATUTS_GESTION_JOUEURS);
 let motDePasseDemandesDiscord = "";
 let nbDemandesLiaisonDiscord = null;
+let competitionModificationInitiale = null;
+let presencesInitialesSession = {};
 
 const DUREE_CACHE_FRONT_MS = 5 * 60 * 1000;
 
@@ -73,6 +75,348 @@ function escapeHTML(valeur) {
 
 function jsString(valeur) {
   return String(valeur ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function normaliserValeurComparaison(valeur) {
+  return String(valeur ?? "").trim().replace(/\s+/g, " ");
+}
+
+function normaliserTexteComparaison(valeur) {
+  return normaliserValeurComparaison(valeur)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function valeursIdentiques(ancienneValeur, nouvelleValeur) {
+  return normaliserValeurComparaison(ancienneValeur) ===
+    normaliserValeurComparaison(nouvelleValeur);
+}
+
+function normaliserBooleenComparaison(valeur) {
+  return valeur === true || valeur === "true" || valeur === "oui";
+}
+
+function normaliserHeureComparaison(valeur) {
+  const match = normaliserValeurComparaison(valeur).match(/^([01]\d|2[0-3]):([0-5]\d)/);
+  return match ? match[1] + ":" + match[2] : "";
+}
+
+function normaliserRolesComparaison(roles) {
+  return String(roles || "")
+    .split(",")
+    .map(function (role) { return normaliserValeurComparaison(role); })
+    .filter(Boolean);
+}
+
+function rolesIdentiques(anciensRoles, nouveauxRoles) {
+  const anciens = normaliserRolesComparaison(anciensRoles)
+    .map(normaliserTexteComparaison)
+    .sort()
+    .join("|");
+  const nouveaux = normaliserRolesComparaison(nouveauxRoles)
+    .map(normaliserTexteComparaison)
+    .sort()
+    .join("|");
+
+  return anciens === nouveaux;
+}
+
+function afficherRolesComparaison(roles) {
+  const rolesLisibles = normaliserRolesComparaison(roles);
+  return rolesLisibles.length > 0 ? rolesLisibles.join(", ") : "Aucun";
+}
+
+function afficherTexteComparaison(valeur) {
+  const texte = normaliserValeurComparaison(valeur);
+  return texte || "Vide";
+}
+
+function creerLigneChangement(libelle, ancienneValeur, nouvelleValeur) {
+  return {
+    libelle: libelle,
+    ancienneValeur: ancienneValeur,
+    nouvelleValeur: nouvelleValeur
+  };
+}
+
+function rendreLignesChangements(changements) {
+  if (!changements || changements.length === 0) {
+    return `<p>Aucune modification détectée.</p>`;
+  }
+
+  return changements.map(function (changement) {
+    return `
+      <p>
+        <strong>${escapeHTML(changement.libelle)}</strong> :
+        ${escapeHTML(changement.ancienneValeur)} → ${escapeHTML(changement.nouvelleValeur)}
+      </p>
+    `;
+  }).join("");
+}
+
+function normaliserCompetitionModification(config) {
+  const fermetureAutoActive = normaliserBooleenComparaison(config.fermetureAutoActive);
+  const notificationPresenceActive = normaliserBooleenComparaison(config.notificationPresenceActive);
+  const rappelPresenceActive = normaliserBooleenComparaison(config.rappelPresenceActive);
+
+  return {
+    nom: normaliserValeurComparaison(config.nom),
+    description: normaliserValeurComparaison(config.description),
+    statut: normaliserValeurComparaison(config.statut || "Brouillon"),
+    rolesAutorises: normaliserRolesComparaison(config.rolesAutorises).join(","),
+    fermetureAutoActive: fermetureAutoActive,
+    heureOuvertureAuto: fermetureAutoActive ? normaliserHeureComparaison(config.heureOuvertureAuto || config.heureOuverture) : "",
+    heureFermetureAuto: fermetureAutoActive ? normaliserHeureComparaison(config.heureFermetureAuto || config.heureFermeture) : "",
+    notificationPresenceActive: notificationPresenceActive,
+    heureNotificationPresence: notificationPresenceActive ? normaliserHeureComparaison(config.heureNotificationPresence) : "",
+    rappelPresenceActive: rappelPresenceActive,
+    heureRappelPresence: rappelPresenceActive ? normaliserHeureComparaison(config.heureRappelPresence) : ""
+  };
+}
+
+function libelleActivation(active) {
+  return active ? "Activée" : "Désactivée";
+}
+
+function libelleOptionHeure(active, heure) {
+  return active ? "Activée à " + (heure || "-") : "Désactivée";
+}
+
+function libelleFermetureAuto(etat) {
+  if (!etat.fermetureAutoActive) return "Désactivée";
+  return "Activée, ouverture " +
+    (etat.heureOuvertureAuto || "-") +
+    ", fermeture " +
+    (etat.heureFermetureAuto || "-");
+}
+
+function comparerOptionHoraire(changements, options) {
+  if (options.ancienActif !== options.nouveauActif) {
+    changements.push(creerLigneChangement(
+      options.libelleActivation,
+      libelleOptionHeure(options.ancienActif, options.ancienneHeure),
+      libelleOptionHeure(options.nouveauActif, options.nouvelleHeure)
+    ));
+    return;
+  }
+
+  if (options.nouveauActif && options.ancienneHeure !== options.nouvelleHeure) {
+    changements.push(creerLigneChangement(
+      options.libelleHeure,
+      options.ancienneHeure || "-",
+      options.nouvelleHeure || "-"
+    ));
+  }
+}
+
+function comparerModificationCompetition(config) {
+  const ancien = normaliserCompetitionModification(competitionModificationInitiale || {});
+  const nouveau = normaliserCompetitionModification(config);
+  const changements = [];
+
+  if (!valeursIdentiques(ancien.nom, nouveau.nom)) {
+    changements.push(creerLigneChangement("Nom", afficherTexteComparaison(ancien.nom), afficherTexteComparaison(nouveau.nom)));
+  }
+
+  if (!valeursIdentiques(ancien.description, nouveau.description)) {
+    changements.push(creerLigneChangement("Description", afficherTexteComparaison(ancien.description), afficherTexteComparaison(nouveau.description)));
+  }
+
+  if (!valeursIdentiques(ancien.statut, nouveau.statut)) {
+    changements.push(creerLigneChangement("Statut", ancien.statut, nouveau.statut));
+  }
+
+  if (!rolesIdentiques(ancien.rolesAutorises, nouveau.rolesAutorises)) {
+    changements.push(creerLigneChangement(
+      "Rôles autorisés",
+      afficherRolesComparaison(ancien.rolesAutorises),
+      afficherRolesComparaison(nouveau.rolesAutorises)
+    ));
+  }
+
+  if (ancien.fermetureAutoActive !== nouveau.fermetureAutoActive) {
+    changements.push(creerLigneChangement(
+      "Fermeture automatique",
+      libelleFermetureAuto(ancien),
+      libelleFermetureAuto(nouveau)
+    ));
+  } else if (
+    nouveau.fermetureAutoActive &&
+    (
+      ancien.heureOuvertureAuto !== nouveau.heureOuvertureAuto ||
+      ancien.heureFermetureAuto !== nouveau.heureFermetureAuto
+    )
+  ) {
+    changements.push(creerLigneChangement(
+      "Horaires de fermeture automatique",
+      "ouverture " + (ancien.heureOuvertureAuto || "-") + ", fermeture " + (ancien.heureFermetureAuto || "-"),
+      "ouverture " + (nouveau.heureOuvertureAuto || "-") + ", fermeture " + (nouveau.heureFermetureAuto || "-")
+    ));
+  }
+
+  comparerOptionHoraire(changements, {
+    libelleActivation: "Notification Discord des présences",
+    libelleHeure: "Heure de notification Discord des présences",
+    ancienActif: ancien.notificationPresenceActive,
+    nouveauActif: nouveau.notificationPresenceActive,
+    ancienneHeure: ancien.heureNotificationPresence,
+    nouvelleHeure: nouveau.heureNotificationPresence
+  });
+
+  comparerOptionHoraire(changements, {
+    libelleActivation: "Rappel Discord des joueurs sans réponse",
+    libelleHeure: "Heure du rappel Discord",
+    ancienActif: ancien.rappelPresenceActive,
+    nouveauActif: nouveau.rappelPresenceActive,
+    ancienneHeure: ancien.heureRappelPresence,
+    nouvelleHeure: nouveau.heureRappelPresence
+  });
+
+  return changements;
+}
+
+function statutPresenceLisible(statut) {
+  const statutNormalise = normaliserTexteComparaison(statut);
+
+  if (statutNormalise === "present") return "Présent";
+  if (statutNormalise === "absent") return "Absent";
+  if (statutNormalise === "remplacant") return "Remplaçant";
+
+  return "Non renseigné";
+}
+
+function presenceEstRenseignee(statut) {
+  const statutLisible = statutPresenceLisible(statut);
+  return statutLisible === "Présent" ||
+    statutLisible === "Absent" ||
+    statutLisible === "Remplaçant";
+}
+
+function normaliserHorairesComparaison(horaires) {
+  return String(horaires || "")
+    .split(",")
+    .map(function (horaire) { return normaliserValeurComparaison(horaire); })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function horairesPresenceUtiles(statut, horaires) {
+  const statutLisible = statutPresenceLisible(statut);
+  if (statutLisible !== "Présent" && statutLisible !== "Remplaçant") {
+    return "";
+  }
+
+  return normaliserHorairesComparaison(horaires);
+}
+
+function creerIndexPresencesInitiales(dates, presencesExistantes) {
+  const index = {};
+
+  (dates || []).forEach(function (date) {
+    const dateCompetition = String(date.dateCompetition || "").trim();
+    if (!dateCompetition) return;
+
+    index[dateCompetition] = {
+      dateCompetition: dateCompetition,
+      dateAffichage: date.dateAffichage || dateCompetition,
+      statut: "Non renseigné",
+      horairesDisponibles: ""
+    };
+  });
+
+  (presencesExistantes || []).forEach(function (presence) {
+    const dateCompetition = String(presence.dateCompetition || "").trim();
+    if (!dateCompetition) return;
+
+    if (!index[dateCompetition]) {
+      index[dateCompetition] = {
+        dateCompetition: dateCompetition,
+        dateAffichage: dateCompetition,
+        statut: "Non renseigné",
+        horairesDisponibles: ""
+      };
+    }
+
+    index[dateCompetition].statut = statutPresenceLisible(presence.statut);
+    index[dateCompetition].horairesDisponibles = horairesPresenceUtiles(
+      presence.statut,
+      presence.horairesDisponibles
+    );
+  });
+
+  return index;
+}
+
+function comparerPresencesSession(presences) {
+  const changements = [];
+
+  (presences || []).forEach(function (presence) {
+    const dateCompetition = String(presence.dateCompetition || "").trim();
+    const initiale = presencesInitialesSession[dateCompetition] || {
+      dateCompetition: dateCompetition,
+      dateAffichage: dateCompetition,
+      statut: "Non renseigné",
+      horairesDisponibles: ""
+    };
+
+    const ancienStatut = statutPresenceLisible(initiale.statut);
+    const nouveauStatut = statutPresenceLisible(presence.statut);
+    const ancienRenseigne = presenceEstRenseignee(ancienStatut);
+    const nouveauRenseigne = presenceEstRenseignee(nouveauStatut);
+    const anciensHoraires = horairesPresenceUtiles(ancienStatut, initiale.horairesDisponibles);
+    const nouveauxHoraires = horairesPresenceUtiles(nouveauStatut, presence.horairesDisponibles);
+    const dateAffichage = initiale.dateAffichage || dateCompetition;
+
+    if (ancienStatut !== nouveauStatut) {
+      let libelle = "Modification";
+
+      if (!ancienRenseigne && nouveauRenseigne) {
+        libelle = "Ajout";
+      } else if (ancienRenseigne && !nouveauRenseigne) {
+        libelle = "Suppression de réponse";
+      }
+
+      changements.push({
+        dateAffichage: dateAffichage,
+        texte: ancienStatut + " → " + nouveauStatut,
+        libelle: libelle
+      });
+      return;
+    }
+
+    if (
+      ancienRenseigne &&
+      nouveauRenseigne &&
+      anciensHoraires !== nouveauxHoraires
+    ) {
+      changements.push({
+        dateAffichage: dateAffichage,
+        texte: "horaires modifiés — " +
+          (anciensHoraires || "Aucun horaire") +
+          " → " +
+          (nouveauxHoraires || "Aucun horaire"),
+        libelle: "Horaires modifiés"
+      });
+    }
+  });
+
+  return changements;
+}
+
+function rendreChangementsPresences(changements) {
+  if (!changements || changements.length === 0) {
+    return `<p>Aucune modification détectée.</p>`;
+  }
+
+  return changements.map(function (changement) {
+    return `
+      <p>
+        <strong>${escapeHTML(changement.dateAffichage)}</strong> :
+        ${escapeHTML(changement.texte)}
+      </p>
+    `;
+  }).join("");
 }
 
 function definirModeCarte(mode) {
@@ -464,6 +808,8 @@ function afficherFormulairePresences(idCompetition, nomCompetition, dates, prese
     html += `<p>Aucune date définie pour cette compétition.</p>`;
   }
 
+  presencesInitialesSession = creerIndexPresencesInitiales(dates, presencesExistantes);
+
   const indexPresences = {};
   presencesExistantes.forEach(function (presence) {
     indexPresences[String(presence.dateCompetition).trim()] = presence;
@@ -472,8 +818,8 @@ function afficherFormulairePresences(idCompetition, nomCompetition, dates, prese
   dates.forEach(function (date) {
     const dateTexte = String(date.dateCompetition).trim();
     const presence = indexPresences[dateTexte] || {};
-    const statutActuel = presence.statut || "Non renseigné";
-    const horairesActuels = String(presence.horairesDisponibles || "")
+    const statutActuel = statutPresenceLisible(presence.statut);
+    const horairesActuels = horairesPresenceUtiles(statutActuel, presence.horairesDisponibles)
       .split(",")
       .map(h => h.trim())
       .filter(Boolean);
@@ -556,39 +902,68 @@ function gererAffichageHoraires(selectElement) {
 function afficherRecapitulatif(idCompetition, nomCompetition) {
   const selects = document.querySelectorAll(".select-statut");
   const presences = [];
-  let nbPresent = 0, nbAbsent = 0, nbRemplacant = 0, nbNonRenseigne = 0;
 
   selects.forEach(function (select) {
     const dateCard = select.closest(".date-card");
     const dateCompetition = select.dataset.date;
-    const statut = select.value;
+    const statut = statutPresenceLisible(select.value);
     let horairesDisponibles = [];
     if (statut === "Présent" || statut === "Remplaçant") {
       dateCard.querySelectorAll(".horaire-checkbox").forEach(function (caseHoraire) {
         if (caseHoraire.checked) horairesDisponibles.push(caseHoraire.value);
       });
     }
-    presences.push({ dateCompetition, statut, horairesDisponibles: horairesDisponibles.join(",") });
-    if (statut === "Présent") nbPresent++;
-    else if (statut === "Absent") nbAbsent++;
-    else if (statut === "Remplaçant") nbRemplacant++;
-    else nbNonRenseigne++;
+    presences.push({
+      dateCompetition,
+      statut,
+      horairesDisponibles: normaliserHorairesComparaison(horairesDisponibles.join(","))
+    });
   });
 
-  let html = `<div class="form-zone"><h2>Vérification</h2><p>${escapeHTML(nomCompetition)}</p><div class="recap-box">`;
-  presences.forEach(function (presence) {
-    let texteHoraires = "";
-    if (presence.statut === "Présent" || presence.statut === "Remplaçant") texteHoraires = presence.horairesDisponibles ? ` — Horaires : ${escapeHTML(presence.horairesDisponibles)}` : " — Aucun horaire sélectionné";
-    html += `<p><strong>${escapeHTML(presence.dateCompetition)}</strong> → ${escapeHTML(presence.statut)}${texteHoraires}</p>`;
-  });
-  html += `</div><div class="recap-box"><p>🟢 Présent : ${nbPresent}</p><p>🔴 Absent : ${nbAbsent}</p><p>🔵 Remplaçant : ${nbRemplacant}</p><p>⚪ Non renseigné : ${nbNonRenseigne}</p></div>
-    <button onclick='confirmerPresences(${idCompetition}, ${JSON.stringify(JSON.stringify(presences))})'>Confirmer</button>
-    <button onclick="ouvrirCompetition(${idCompetition}, '${jsString(nomCompetition)}', true)" class="secondary-button">Modifier</button></div>`;
+  const changements = comparerPresencesSession(presences);
+
+  let html = `
+    <div class="form-zone">
+      <h2>Vérification</h2>
+      <p>${escapeHTML(nomCompetition)}</p>
+      <div class="recap-box">
+        ${rendreChangementsPresences(changements)}
+      </div>
+  `;
+
+  if (changements.length > 0) {
+    html += `
+      <button onclick='confirmerPresences(${idCompetition}, ${JSON.stringify(JSON.stringify(presences))})'>
+        Confirmer
+      </button>
+    `;
+  }
+
+  html += `
+      <button onclick="ouvrirCompetition(${idCompetition}, '${jsString(nomCompetition)}', true)" class="secondary-button">
+        Modifier
+      </button>
+    </div>
+  `;
+
   setContenu(html);
 }
 
 function confirmerPresences(idCompetition, presencesJSON) {
   const presences = JSON.parse(presencesJSON);
+  const changements = comparerPresencesSession(presences);
+
+  if (changements.length === 0) {
+    setContenu(`
+      <div class="form-zone">
+        <h2>Aucune modification détectée</h2>
+        <p>Aucune sauvegarde n'a été effectuée.</p>
+        <button onclick="afficherCompetitionsJoueur()">Retour aux compétitions</button>
+      </div>
+    `);
+    return;
+  }
+
   const pseudo = utilisateurConnecte.joueur.pseudo;
   afficherChargement("Sauvegarde en cours...", "Merci de patienter.");
   appelAPI("sauvegarderPresences", { idCompetition, pseudo, presences: JSON.stringify(presences) }, function (data) {
@@ -1477,6 +1852,25 @@ function afficherFormulaireCreationCompetition() {
         </div>
       </div>
 
+      <div class="stats-box">
+        <h3>5. Rappel Discord des présences</h3>
+
+        <label for="modeRappelPresence">Mode</label>
+        <select id="modeRappelPresence" onchange="gererAffichageRappelPresence()">
+          <option value="non">Pas de rappel</option>
+          <option value="oui">Rappel automatique des joueurs sans réponse</option>
+        </select>
+
+        <div id="zoneRappelPresence" style="display:none;">
+          <label for="heureRappelPresence">Heure du rappel</label>
+          <input type="time" id="heureRappelPresence" value="17:00">
+
+          <p>
+            À l'heure choisie, les joueurs actifs qui n'ont pas encore renseigné leurs présences du jour seront relancés sur Discord.
+          </p>
+        </div>
+      </div>
+
       <button onclick="previsualiserCreationCompetition()">
         Prévisualiser la création
       </button>
@@ -1516,6 +1910,17 @@ function previsualiserCreationCompetition() {
 
   const heureNotificationPresence =
     document.getElementById("heureNotificationPresence")?.value || "";
+
+  const modeRappelPresence =
+    document.getElementById("modeRappelPresence")?.value || "non";
+
+  const rappelPresenceActive =
+    modeRappelPresence === "oui";
+
+  const heureRappelPresence =
+    rappelPresenceActive
+      ? document.getElementById("heureRappelPresence")?.value || ""
+      : "";
 
   const roles = recupererRolesCreationCompetition();
   const joursSelectionnes = recupererJoursSelectionnes();
@@ -1582,6 +1987,16 @@ function previsualiserCreationCompetition() {
     );
   }
 
+  if (
+    rappelPresenceActive &&
+    !heureRappelPresence
+  ) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de renseigner une heure de rappel Discord des présences."
+    );
+  }
+
   const datesGenerees =
     genererDatesDepuisPeriode(
       dateDebut,
@@ -1607,7 +2022,9 @@ function previsualiserCreationCompetition() {
     heureOuvertureAuto: heureOuvertureAuto,
     heureFermetureAuto: heureFermetureAuto,
     notificationPresenceActive: notificationPresenceActive,
-    heureNotificationPresence: heureNotificationPresence
+    heureNotificationPresence: heureNotificationPresence,
+    rappelPresenceActive: rappelPresenceActive,
+    heureRappelPresence: heureRappelPresence
   });
 }
 
@@ -1663,6 +2080,11 @@ function afficherRecapCreationCompetition(config) {
       escapeHTML(config.heureNotificationPresence)
     : "Non";
 
+  const texteRappelPresence = config.rappelPresenceActive
+    ? "Oui — rappel à " +
+      escapeHTML(config.heureRappelPresence)
+    : "Non";
+
   setContenu(`
     <div class="form-zone">
       <h2>Prévisualisation</h2>
@@ -1681,6 +2103,8 @@ function afficherRecapCreationCompetition(config) {
         <p>Fermeture automatique : ${texteFermetureAuto}</p>
 
         <p>Notification Discord des présences : ${texteNotificationPresence}</p>
+
+        <p>Rappel Discord des joueurs sans réponse : ${texteRappelPresence}</p>
 
         <p>Nombre de dates générées : ${config.dates.length}</p>
       </div>
@@ -3241,6 +3665,21 @@ function gererAffichageFermetureAuto() {
   }
 }
 
+function gererAffichageRappelPresence() {
+  const modeRappelPresence = document.getElementById("modeRappelPresence");
+  const zoneRappelPresence = document.getElementById("zoneRappelPresence");
+
+  if (!modeRappelPresence || !zoneRappelPresence) {
+    return;
+  }
+
+  if (modeRappelPresence.value === "oui") {
+    zoneRappelPresence.style.display = "";
+  } else {
+    zoneRappelPresence.style.display = "none";
+  }
+}
+
 function afficherFormulaireModificationCompetition(competitionJSON) {
   definirModeCarte("large");
 
@@ -3255,6 +3694,24 @@ function afficherFormulaireModificationCompetition(competitionJSON) {
   const notificationPresenceActive =
     competition.notificationPresenceActive === true ||
     competition.notificationPresenceActive === "true";
+
+  const rappelPresenceActive =
+    competition.rappelPresenceActive === true ||
+    competition.rappelPresenceActive === "true";
+
+  competitionModificationInitiale = normaliserCompetitionModification({
+    nom: competition.nom,
+    description: competition.description || "",
+    statut: competition.statut || "Brouillon",
+    rolesAutorises: rolesActuels,
+    fermetureAutoActive: fermetureAutoActive,
+    heureOuvertureAuto: competition.heureOuverture || "",
+    heureFermetureAuto: competition.heureFermeture || "",
+    notificationPresenceActive: notificationPresenceActive,
+    heureNotificationPresence: competition.heureNotificationPresence || "",
+    rappelPresenceActive: rappelPresenceActive,
+    heureRappelPresence: competition.heureRappelPresence || ""
+  });
 
   setContenu(`
     <div class="form-zone">
@@ -3389,6 +3846,33 @@ function afficherFormulaireModificationCompetition(competitionJSON) {
         </div>
       </div>
 
+      <div class="stats-box">
+        <h3>5. Rappel Discord des présences</h3>
+
+        <label for="modifierModeRappelPresence">Mode</label>
+        <select id="modifierModeRappelPresence" onchange="gererAffichageModificationRappelPresence()">
+          <option value="non" ${!rappelPresenceActive ? "selected" : ""}>
+            Pas de rappel
+          </option>
+          <option value="oui" ${rappelPresenceActive ? "selected" : ""}>
+            Rappel automatique des joueurs sans réponse
+          </option>
+        </select>
+
+        <div id="modifierZoneRappelPresence" style="${rappelPresenceActive ? "" : "display:none;"}">
+          <label for="modifierHeureRappelPresence">Heure du rappel</label>
+          <input
+            type="time"
+            id="modifierHeureRappelPresence"
+            value="${escapeHTML(competition.heureRappelPresence || "17:00")}"
+          >
+
+          <p>
+            À l'heure choisie, les joueurs actifs qui n'ont pas encore renseigné leurs présences du jour seront relancés sur Discord.
+          </p>
+        </div>
+      </div>
+
       <button onclick="previsualiserModificationCompetition(${Number(competition.id)})">
         Prévisualiser les modifications
       </button>
@@ -3453,6 +3937,17 @@ function previsualiserModificationCompetition(idCompetition) {
   const heureNotificationPresence =
     document.getElementById("modifierHeureNotificationPresence")?.value || "";
 
+  const modeRappelPresence =
+    document.getElementById("modifierModeRappelPresence")?.value || "non";
+
+  const rappelPresenceActive =
+    modeRappelPresence === "oui";
+
+  const heureRappelPresence =
+    rappelPresenceActive
+      ? document.getElementById("modifierHeureRappelPresence")?.value || ""
+      : "";
+
   const roles = recupererRolesModificationCompetition();
 
   if (!nom) {
@@ -3489,7 +3984,17 @@ function previsualiserModificationCompetition(idCompetition) {
     );
   }
 
-  afficherRecapModificationCompetition({
+  if (
+    rappelPresenceActive &&
+    !heureRappelPresence
+  ) {
+    return afficherMessageModal(
+      "Erreur",
+      "Merci de renseigner une heure de rappel Discord des présences."
+    );
+  }
+
+  const config = {
     idCompetition: idCompetition,
     nom: nom,
     description: description,
@@ -3499,24 +4004,23 @@ function previsualiserModificationCompetition(idCompetition) {
     heureOuvertureAuto: heureOuvertureAuto,
     heureFermetureAuto: heureFermetureAuto,
     notificationPresenceActive: notificationPresenceActive,
-    heureNotificationPresence: heureNotificationPresence
-  });
+    heureNotificationPresence: heureNotificationPresence,
+    rappelPresenceActive: rappelPresenceActive,
+    heureRappelPresence: heureRappelPresence
+  };
+
+  config.changements = comparerModificationCompetition(config);
+  config.aucuneModification = config.changements.length === 0;
+
+  afficherRecapModificationCompetition(config);
 }
 
 function afficherRecapModificationCompetition(config) {
   definirModeCarte("large");
 
-  const texteFermetureAuto = config.fermetureAutoActive
-    ? "Oui — ouverture " +
-      escapeHTML(config.heureOuvertureAuto) +
-      " / fermeture " +
-      escapeHTML(config.heureFermetureAuto)
-    : "Non";
-
-  const texteNotificationPresence = config.notificationPresenceActive
-    ? "Oui — notification à " +
-      escapeHTML(config.heureNotificationPresence)
-    : "Non";
+  const changements = Array.isArray(config.changements)
+    ? config.changements
+    : comparerModificationCompetition(config);
 
   setContenu(`
     <div class="form-zone">
@@ -3525,20 +4029,14 @@ function afficherRecapModificationCompetition(config) {
       <div class="stats-box">
         <h3>${escapeHTML(config.nom)}</h3>
 
-        <p>${escapeHTML(config.description)}</p>
-
-        <p>Statut : ${escapeHTML(config.statut)}</p>
-
-        <p>Rôles autorisés : ${escapeHTML(config.rolesAutorises)}</p>
-
-        <p>Fermeture automatique : ${texteFermetureAuto}</p>
-
-        <p>Notification Discord des présences : ${texteNotificationPresence}</p>
+        ${rendreLignesChangements(changements)}
       </div>
 
-      <button onclick='confirmerModificationCompetition(${JSON.stringify(JSON.stringify(config))})'>
-        Confirmer les modifications
-      </button>
+      ${changements.length > 0
+        ? `<button onclick='confirmerModificationCompetition(${JSON.stringify(JSON.stringify(config))})'>
+            Confirmer les modifications
+          </button>`
+        : ""}
 
       <button onclick="afficherGestionCompetitions()" class="secondary-button">
         Annuler
@@ -3549,6 +4047,18 @@ function afficherRecapModificationCompetition(config) {
 
 function confirmerModificationCompetition(configJSON) {
   const config = JSON.parse(configJSON);
+  const changements = Array.isArray(config.changements)
+    ? config.changements
+    : comparerModificationCompetition(config);
+
+  if (changements.length === 0) {
+    afficherMessageModal(
+      "Aucune modification détectée",
+      "Aucune sauvegarde n'a été effectuée.",
+      afficherGestionCompetitions
+    );
+    return;
+  }
 
   afficherChargement(
     "Modification en cours...",
@@ -3883,5 +4393,20 @@ function gererAffichageModificationNotificationPresence() {
     zoneNotificationPresence.style.display = "";
   } else {
     zoneNotificationPresence.style.display = "none";
+  }
+}
+
+function gererAffichageModificationRappelPresence() {
+  const modeRappelPresence = document.getElementById("modifierModeRappelPresence");
+  const zoneRappelPresence = document.getElementById("modifierZoneRappelPresence");
+
+  if (!modeRappelPresence || !zoneRappelPresence) {
+    return;
+  }
+
+  if (modeRappelPresence.value === "oui") {
+    zoneRappelPresence.style.display = "";
+  } else {
+    zoneRappelPresence.style.display = "none";
   }
 }
