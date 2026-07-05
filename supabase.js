@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.11.2 - Migration complète Supabase
+   Version Alpha 0.12.0 - Migration complète Supabase
    ========================================================== */
 
 /*

@@ -1,10 +1,11 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.11.2 - Supabase
+   Version Alpha 0.12.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.11.2 - Supabase";
+const VERSION_SITE = "Alpha 0.12.0 - Supabase";
+const CLE_PSEUDO_SAUVEGARDE = "mpp_saved_pseudo";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -444,12 +445,40 @@ function afficherVersionSite() {
   if (elementVersion) elementVersion.textContent = "Version " + VERSION_SITE;
 }
 
+function lirePseudoSauvegarde() {
+  try {
+    return String(localStorage.getItem(CLE_PSEUDO_SAUVEGARDE) || "").trim();
+  } catch (erreur) {
+    return "";
+  }
+}
+
+function memoriserPseudoConnexion(pseudo, doitMemoriser) {
+  try {
+    if (doitMemoriser && pseudo) {
+      localStorage.setItem(CLE_PSEUDO_SAUVEGARDE, pseudo);
+      return;
+    }
+
+    localStorage.removeItem(CLE_PSEUDO_SAUVEGARDE);
+  } catch (erreur) {
+    console.warn("Impossible de mettre a jour le pseudo sauvegarde.", erreur);
+  }
+}
+
 function afficherConnexion() {
   definirModeCarte("normal");
+  const pseudoSauvegarde = lirePseudoSauvegarde();
+  const memoriserCoche = pseudoSauvegarde ? " checked" : "";
+
   setContenu(`
     <div class="form-zone">
       <label for="pseudo">Pseudo World of Tanks</label>
-      <input type="text" id="pseudo" placeholder="Ex : Raiju153" onkeydown="if(event.key==='Enter'){connexion();}">
+      <input type="text" id="pseudo" value="${escapeHTML(pseudoSauvegarde)}" placeholder="Ex : Raiju153" onkeydown="if(event.key==='Enter'){connexion();}">
+      <label class="remember-login-label" for="memoriserPseudo">
+        <input type="checkbox" id="memoriserPseudo"${memoriserCoche}>
+        <span>Se souvenir de mon pseudo</span>
+      </label>
       <button onclick="connexion()">ACCÈS OPÉRATIONNEL</button>
       <p id="message"></p>
     </div>
@@ -458,6 +487,7 @@ function afficherConnexion() {
 
 async function connexion() {
   const pseudo = document.getElementById("pseudo").value.trim();
+  const memoriserPseudo = Boolean(document.getElementById("memoriserPseudo")?.checked);
   const message = document.getElementById("message");
 
   if (pseudo === "") {
@@ -480,6 +510,7 @@ async function connexion() {
 
     utilisateurConnecte = data;
     accesOfficierValide = false;
+    memoriserPseudoConnexion(pseudo, memoriserPseudo);
 
     if (estOfficierConnecte() || estSuperAdminConnecte()) {
       afficherDemandeMotDePasseOfficier();
