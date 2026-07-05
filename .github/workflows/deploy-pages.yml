@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: https://mpp-clan.fr
 
     steps:
       - name: Checkout
@@ -38,8 +38,37 @@ jobs:
           path: .
           name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Deploy to GitHub Pages
-        id: deployment
+      - name: Deploy to GitHub Pages - Tentative 1
+        id: deploy_attempt_1
         uses: actions/deploy-pages@v4
+        continue-on-error: true
         with:
           artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Attendre avant nouvelle tentative
+        if: ${{ steps.deploy_attempt_1.outcome == 'failure' }}
+        run: sleep 60
+
+      - name: Deploy to GitHub Pages - Tentative 2
+        id: deploy_attempt_2
+        if: ${{ steps.deploy_attempt_1.outcome == 'failure' }}
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+        with:
+          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Attendre avant derniere tentative
+        if: ${{ steps.deploy_attempt_1.outcome == 'failure' && steps.deploy_attempt_2.outcome == 'failure' }}
+        run: sleep 90
+
+      - name: Deploy to GitHub Pages - Tentative 3
+        id: deploy_attempt_3
+        if: ${{ steps.deploy_attempt_1.outcome == 'failure' && steps.deploy_attempt_2.outcome == 'failure' }}
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+        with:
+          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Verifier le resultat du deploiement
+        if: ${{ steps.deploy_attempt_1.outcome == 'failure' && steps.deploy_attempt_2.outcome == 'failure' && steps.deploy_attempt_3.outcome == 'failure' }}
+        run: exit 1
