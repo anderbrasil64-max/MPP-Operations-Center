@@ -955,6 +955,136 @@ button:disabled {
   font-weight: bold;
 }
 
+.today-page .table-subtitle {
+  text-align: center;
+}
+
+.today-card,
+.today-competition-card {
+  border: 1px solid #4B6B3C;
+  border-radius: 8px;
+  background: #1E1E1E;
+  padding: 15px;
+  margin-bottom: 15px;
+}
+
+.today-competition-card {
+  border-color: #5f854b;
+}
+
+.today-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.today-summary div {
+  border: 1px solid #4B6B3C;
+  border-radius: 8px;
+  background: #151515;
+  padding: 12px;
+  text-align: center;
+}
+
+.today-summary span {
+  display: block;
+  color: #AAAAAA;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.today-summary strong {
+  color: #EAEAEA;
+  font-size: 22px;
+}
+
+.today-summary-compact {
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  margin-top: 10px;
+}
+
+.today-reminder-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid #4B6B3C;
+  border-radius: 8px;
+  background: #151515;
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.today-reminder-status span,
+.today-reminder-status small {
+  color: #AAAAAA;
+}
+
+.today-reminder-status strong {
+  color: #EAEAEA;
+}
+
+.today-reminder-disabled {
+  border-color: #707070;
+}
+
+.today-reminder-pending {
+  border-color: #C47A28;
+}
+
+.today-reminder-sent,
+.today-reminder-clear {
+  border-color: #4B8F4B;
+}
+
+.today-reminder-error {
+  border-color: #9E3838;
+}
+
+.today-hour-table {
+  margin-top: 10px;
+}
+
+.today-missing-list {
+  margin-top: 10px;
+}
+
+.today-missing-list h4 {
+  color: #FF6A00;
+  margin: 12px 0 6px 0;
+}
+
+.today-missing-list ul {
+  margin: 0 0 8px 18px;
+  padding: 0;
+}
+
+.today-missing-list li {
+  margin: 6px 0;
+  color: #EAEAEA;
+}
+
+.today-missing-list span {
+  color: #AAAAAA;
+}
+
+.today-muted {
+  color: #AAAAAA;
+  margin-bottom: 0;
+}
+
+.today-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.today-actions button {
+  width: 100%;
+  margin-top: 0;
+}
+
 @media (max-width: 1000px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
@@ -982,8 +1112,18 @@ button:disabled {
   }
 
   .table-actions,
-  .modal-actions {
+  .modal-actions,
+  .today-actions {
     flex-direction: column;
+  }
+
+  .today-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .today-summary,
+  .today-summary-compact {
+    grid-template-columns: 1fr;
   }
 
   .journal-filter-panel {

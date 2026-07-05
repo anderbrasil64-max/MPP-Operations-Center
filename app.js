@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.10.1 - Supabase
+   Version Alpha 0.11.0 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.10.1 - Supabase";
+const VERSION_SITE = "Alpha 0.11.0 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -36,6 +36,7 @@ let motDePasseDemandesDiscord = "";
 let nbDemandesLiaisonDiscord = null;
 let competitionModificationInitiale = null;
 let presencesInitialesSession = {};
+let donneesAujourdHuiOfficier = null;
 
 const DUREE_CACHE_FRONT_MS = 5 * 60 * 1000;
 
@@ -1121,6 +1122,10 @@ function construireTableauDeBordOfficier(data) {
       </div>
 
       <div class="table-actions">
+        <button onclick="afficherAujourdHuiOfficier()">
+          📅 Présences du jour
+        </button>
+
         <button onclick="afficherSelectionCompetitionOfficier()">
           👥 Consulter les présences
         </button>
@@ -1135,6 +1140,343 @@ function construireTableauDeBordOfficier(data) {
       <button onclick="afficherChoixOfficier()" class="secondary-button">
         Retour
       </button>
+    </div>
+  `);
+}
+
+function formaterStatutRappelAujourdHui(rappel) {
+  const rappelInfo = rappel || {};
+  const statut = String(rappelInfo.statutJour || "").trim();
+  const heure = rappelInfo.heureProgrammee || "";
+  const libelles = {
+    desactive: {
+      classe: "today-reminder-disabled",
+      texte: "Désactivé"
+    },
+    pas_encore_envoye: {
+      classe: "today-reminder-pending",
+      texte: "En attente de l'heure programmée"
+    },
+    envoye: {
+      classe: "today-reminder-sent",
+      texte: "Envoyé"
+    },
+    aucun_joueur: {
+      classe: "today-reminder-clear",
+      texte: "Aucun joueur à relancer"
+    },
+    erreur: {
+      classe: "today-reminder-error",
+      texte: "Erreur"
+    },
+    en_cours: {
+      classe: "today-reminder-pending",
+      texte: "En cours"
+    },
+    indisponible: {
+      classe: "today-reminder-pending",
+      texte: "En attente de l'heure programmée"
+    }
+  };
+  const etat = libelles[statut] || libelles.pas_encore_envoye;
+  const activation = rappelInfo.actif
+    ? "Activé" + (heure ? " à " + heure : "")
+    : "Désactivé";
+  const textePrincipal = rappelInfo.actif
+    ? activation + " — " + etat.texte
+    : etat.texte;
+  const details = [];
+
+  if (rappelInfo.envoyeA) {
+    details.push("Dernier envoi : " + formaterDateHeureFrance(rappelInfo.envoyeA));
+  }
+
+  if (statut === "erreur") {
+    details.push("Une erreur a été enregistrée pour le rappel du jour.");
+  }
+
+  return `
+    <div class="today-reminder-status ${etat.classe}">
+      <span>Rappel Discord</span>
+      <strong>${escapeHTML(textePrincipal)}</strong>
+      ${details.length > 0 ? `<small>${escapeHTML(details.join(" | "))}</small>` : ""}
+    </div>
+  `;
+}
+
+function rendreEffectifHoraireAujourdHui(effectifParHoraire) {
+  const lignes = effectifParHoraire || [];
+
+  if (lignes.length === 0) {
+    return `<p class="today-muted">Aucun horaire défini pour aujourd'hui.</p>`;
+  }
+
+  let html = `
+    <div class="table-container">
+      <table class="presence-table today-hour-table">
+        <thead>
+          <tr>
+            <th>Horaire</th>
+            <th>Présents</th>
+            <th>Remplaçants</th>
+            <th>Absents</th>
+            <th>Sans réponse</th>
+          </tr>
+        </thead>
+        <tbody>
+  `;
+
+  lignes.forEach(function (ligne) {
+    html += `
+      <tr>
+        <td>${escapeHTML(ligne.horaire)}</td>
+        <td>${Number(ligne.presents || 0)}</td>
+        <td>${Number(ligne.remplacants || 0)}</td>
+        <td>${Number(ligne.absents || 0)}</td>
+        <td>${Number(ligne.sansReponse || 0)}</td>
+      </tr>
+    `;
+  });
+
+  html += `
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  return html;
+}
+
+function rendreListeSansReponseAujourdHui(competition) {
+  const sansReponse = competition?.joueursSansReponse || {};
+  const avecDiscord = sansReponse.avecDiscord || [];
+  const sansDiscord = sansReponse.sansDiscord || [];
+  const total = Number(sansReponse.total || 0);
+
+  if (total === 0) {
+    return `
+      <div class="today-missing-list">
+        <p class="today-muted">Tous les joueurs actifs concernés ont répondu.</p>
+      </div>
+    `;
+  }
+
+  let html = `<div class="today-missing-list">`;
+
+  if (avecDiscord.length > 0) {
+    html += `
+      <h4>Discord lié</h4>
+      <ul>
+    `;
+
+    avecDiscord.forEach(function (joueur) {
+      const discord = joueur.discordUsername
+        ? ` <span>${escapeHTML(joueur.discordUsername)}</span>`
+        : "";
+      html += `<li><strong>${escapeHTML(joueur.pseudo)}</strong>${discord}</li>`;
+    });
+
+    html += `</ul>`;
+  }
+
+  if (sansDiscord.length > 0) {
+    html += `
+      <h4>Discord non lié</h4>
+      <ul>
+    `;
+
+    sansDiscord.forEach(function (joueur) {
+      html += `<li><strong>${escapeHTML(joueur.pseudo)}</strong></li>`;
+    });
+
+    html += `</ul>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function afficherAujourdHuiOfficier() {
+  definirModeCarte("large");
+
+  if (!accesOfficierValide) {
+    afficherDemandeMotDePasseOfficier();
+    return;
+  }
+
+  afficherChargement("Présences du jour", "Chargement de la situation du jour...");
+
+  appelAPI(
+    "chargerAujourdHuiOfficier",
+    {
+      utilisateur: utilisateurConnecte.joueur.pseudo
+    },
+    function (data) {
+      if (!data.succes) {
+        return afficherErreur(
+          data.message || "Impossible de charger la page Présences du jour.",
+          `<button onclick="afficherEspaceOfficier()" class="secondary-button">Retour</button>`
+        );
+      }
+
+      construirePageAujourdHuiOfficier(data);
+    }
+  );
+}
+
+function construirePageAujourdHuiOfficier(data) {
+  definirModeCarte("large");
+  donneesAujourdHuiOfficier = data;
+
+  const competitions = data.competitions || [];
+  const resume = data.resume || {};
+
+  let html = `
+    <div class="form-zone today-page">
+      <h2>📅 Présences du jour</h2>
+      <p class="table-subtitle">${escapeHTML(data.dateAffichage || "")}</p>
+  `;
+
+  if (competitions.length === 0) {
+    html += `
+      <div class="today-card">
+        <p>Aucune compétition prévue aujourd'hui.</p>
+      </div>
+
+      <button onclick="afficherEspaceOfficier()" class="secondary-button">
+        Retour
+      </button>
+    </div>
+    `;
+
+    setContenu(html);
+    return;
+  }
+
+  html += `
+    <div class="today-summary">
+      <div>
+        <span>Compétitions</span>
+        <strong>${Number(resume.competitions || competitions.length)}</strong>
+      </div>
+      <div>
+        <span>Présents</span>
+        <strong>${Number(resume.presents || 0)}</strong>
+      </div>
+      <div>
+        <span>Remplaçants</span>
+        <strong>${Number(resume.remplacants || 0)}</strong>
+      </div>
+      <div>
+        <span>Absents</span>
+        <strong>${Number(resume.absents || 0)}</strong>
+      </div>
+      <div>
+        <span>Sans réponse</span>
+        <strong>${Number(resume.sansReponse || 0)}</strong>
+      </div>
+    </div>
+  `;
+
+  competitions.forEach(function (competition) {
+    const stats = competition.stats || {};
+    const nomCompetition = competition.nom || "Compétition";
+
+    html += `
+      <section class="today-competition-card">
+        <div class="competition-card-header">
+          <h3>${escapeHTML(nomCompetition)}</h3>
+          <div class="competition-status-line">
+            ${badgeStatutCompetitionHTML(competition.statut)}
+          </div>
+        </div>
+
+        <p class="table-subtitle">${escapeHTML(competition.date?.dateAffichage || data.dateAffichage || "")}</p>
+
+        ${formaterStatutRappelAujourdHui(competition.rappel)}
+
+        <div class="today-card">
+          <h4>Effectif du jour</h4>
+          <div class="today-summary today-summary-compact">
+            <div>
+              <span>Présents</span>
+              <strong>${Number(stats.presents || 0)}</strong>
+            </div>
+            <div>
+              <span>Remplaçants</span>
+              <strong>${Number(stats.remplacants || 0)}</strong>
+            </div>
+            <div>
+              <span>Absents</span>
+              <strong>${Number(stats.absents || 0)}</strong>
+            </div>
+            <div>
+              <span>Sans réponse</span>
+              <strong>${Number(stats.sansReponse || 0)}</strong>
+            </div>
+          </div>
+
+          ${rendreEffectifHoraireAujourdHui(competition.effectifParHoraire)}
+        </div>
+
+        <div class="today-card">
+          <h4>Joueurs sans réponse aujourd'hui</h4>
+          ${rendreListeSansReponseAujourdHui(competition)}
+        </div>
+
+        <div class="today-actions">
+          <button onclick="afficherTableauPresencesOfficier(${Number(competition.id)}, '${jsString(nomCompetition)}')">
+            👥 Consulter les présences
+          </button>
+
+          <button onclick="afficherSansReponseAujourdHui(${Number(competition.id)})" class="secondary-button">
+            Voir les sans réponse
+          </button>
+        </div>
+      </section>
+    `;
+  });
+
+  html += `
+      <button onclick="afficherEspaceOfficier()" class="secondary-button">
+        Retour
+      </button>
+    </div>
+  `;
+
+  setContenu(html);
+}
+
+function afficherSansReponseAujourdHui(idCompetition) {
+  const data = donneesAujourdHuiOfficier;
+  const competition = (data?.competitions || []).find(function (item) {
+    return Number(item.id) === Number(idCompetition);
+  });
+
+  if (!competition) {
+    afficherAujourdHuiOfficier();
+    return;
+  }
+
+  const sansReponse = competition.joueursSansReponse || {};
+
+  setContenu(`
+    <div class="form-zone">
+      <h2>Joueurs sans réponse aujourd'hui</h2>
+      <p>Compétition : ${escapeHTML(competition.nom || "Compétition")}</p>
+      <p>Total : ${Number(sansReponse.total || 0)}</p>
+
+      ${rendreListeSansReponseAujourdHui(competition)}
+
+      <div class="today-actions">
+        <button onclick="afficherTableauPresencesOfficier(${Number(competition.id)}, '${jsString(competition.nom || "Compétition")}')">
+          👥 Consulter les présences
+        </button>
+
+        <button onclick="construirePageAujourdHuiOfficier(donneesAujourdHuiOfficier)" class="secondary-button">
+          Retour
+        </button>
+      </div>
     </div>
   `);
 }
@@ -1475,6 +1817,10 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
     </div>
 
     <div class="table-actions">
+      <button onclick="afficherAujourdHuiOfficier()">
+        📅 Présences du jour
+      </button>
+
       <button onclick="chargerSansReponse(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">
         Voir les sans réponse
       </button>
@@ -2959,11 +3305,21 @@ function chargerSansReponse(idCompetition, nomCompetition) {
   definirModeCarte("large");
   afficherChargement("Joueurs sans réponse");
   appelAPI("chargerJoueursSansReponse", { idCompetition }, function (data) {
-    if (!data.succes) return afficherErreur(data.message, `<button onclick="afficherTableauPresencesOfficier(${idCompetition}, '${jsString(nomCompetition)}')">Retour</button>`);
+    if (!data.succes) return afficherErreur(data.message, `<button onclick="afficherTableauPresencesOfficier(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">Retour</button>`);
     let html = `<div class="form-zone"><h2>Joueurs sans réponse</h2><p>Compétition : ${escapeHTML(nomCompetition)}</p><p>Total : ${data.nombre}</p><div class="table-container"><table class="presence-table"><thead><tr><th>Joueur</th><th>Rôles</th></tr></thead><tbody>`;
     if (data.joueurs.length === 0) html += `<tr><td colspan="2">Tous les joueurs actifs ont répondu.</td></tr>`;
     data.joueurs.forEach(j => html += `<tr><td>${escapeHTML(j.pseudo)}</td><td>${escapeHTML(j.roles)}</td></tr>`);
-    html += `</tbody></table></div><button onclick="afficherTableauPresencesOfficier(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">Retour au tableau</button></div>`;
+    html += `
+      </tbody></table></div>
+      <div class="table-actions">
+        <button onclick="afficherAujourdHuiOfficier()">
+          📅 Présences du jour
+        </button>
+        <button onclick="afficherTableauPresencesOfficier(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">
+          Retour au tableau
+        </button>
+      </div>
+    </div>`;
     setContenu(html);
   });
 }

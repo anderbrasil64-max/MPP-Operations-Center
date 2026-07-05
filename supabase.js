@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.10.1 - Migration complète Supabase
+   Version Alpha 0.11.0 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -284,6 +284,162 @@ function sbPresenceEstRenseignee(statut) {
     statutLisible === "Remplaçant";
 }
 
+function sbDateIsoFranceAujourdhui() {
+  const parties = new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Europe/Paris",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const valeurs = {};
+
+  parties.forEach(function (partie) {
+    valeurs[partie.type] = partie.value;
+  });
+
+  return valeurs.year + "-" + valeurs.month + "-" + valeurs.day;
+}
+
+function sbRolesNormalises(roles) {
+  return sbTexte(roles)
+    .split(",")
+    .map(function (role) { return sbNormaliserStatut(role); })
+    .filter(Boolean);
+}
+
+function sbJoueurAutorisePourCompetition(joueur, competition) {
+  const rolesAutorises = sbRolesNormalises(competition?.roles_autorises);
+  if (rolesAutorises.length === 0) return true;
+
+  const rolesJoueur = sbRolesNormalises(joueur?.roles);
+  return rolesJoueur.some(function (role) {
+    return rolesAutorises.includes(role);
+  });
+}
+
+function sbJoueurDiscordLie(joueur) {
+  const discordId = sbTexte(joueur?.discord_id);
+  const discordLieA = sbTexte(joueur?.discord_lie_a);
+  return Boolean(discordId && discordLieA && /^\d+$/.test(discordId));
+}
+
+function sbPresenceJourSansReponse(presences) {
+  const lignes = presences || [];
+  return lignes.length === 0 || lignes.every(function (presence) {
+    return !sbPresenceEstRenseignee(presence.statut);
+  });
+}
+
+function sbDisponibiliteDepuisPresencesJour(dateInfo, presences) {
+  const lignes = presences || [];
+  let presenceReference = null;
+
+  for (let i = lignes.length - 1; i >= 0; i--) {
+    if (sbPresenceEstRenseignee(lignes[i].statut)) {
+      presenceReference = lignes[i];
+      break;
+    }
+  }
+
+  if (!presenceReference && lignes.length > 0) {
+    presenceReference = lignes[lignes.length - 1];
+  }
+
+  return {
+    dateCompetition: dateInfo.dateCompetition,
+    dateAffichage: dateInfo.dateAffichage,
+    horaires: dateInfo.horaires || "",
+    statut: presenceReference
+      ? sbStatutPresenceLisible(presenceReference.statut)
+      : "Non renseigné",
+    horairesDisponibles: presenceReference?.horaires_disponibles || ""
+  };
+}
+
+function sbCalculerStatsJour(lignes) {
+  const stats = {
+    presents: 0,
+    remplacants: 0,
+    absents: 0,
+    sansReponse: 0
+  };
+
+  (lignes || []).forEach(function (ligne) {
+    const dispo = ligne.disponibilites && ligne.disponibilites[0];
+    const statut = dispo ? sbStatutPresenceLisible(dispo.statut) : "Non renseigné";
+
+    if (statut === "Présent") stats.presents++;
+    else if (statut === "Remplaçant") stats.remplacants++;
+    else if (statut === "Absent") stats.absents++;
+    else stats.sansReponse++;
+  });
+
+  return stats;
+}
+
+function sbCalculerEffectifHoraireJour(dateInfo, lignes) {
+  const horaires = sbTexte(dateInfo.horaires)
+    .split(",")
+    .map(function (horaire) { return horaire.trim(); })
+    .filter(Boolean);
+
+  return horaires.map(function (horaire) {
+    const stats = {
+      horaire: horaire,
+      presents: 0,
+      remplacants: 0,
+      absents: 0,
+      sansReponse: 0
+    };
+
+    (lignes || []).forEach(function (ligne) {
+      const dispo = ligne.disponibilites && ligne.disponibilites[0];
+      const statut = dispo ? sbStatutPresenceLisible(dispo.statut) : "Non renseigné";
+
+      if (statut === "Non renseigné") {
+        stats.sansReponse++;
+        return;
+      }
+
+      if (statut === "Absent") {
+        stats.absents++;
+        return;
+      }
+
+      if (statut === "Remplaçant") {
+        stats.remplacants++;
+        return;
+      }
+
+      const horairesDisponibles = sbTexte(dispo?.horairesDisponibles)
+        .split(",")
+        .map(function (h) { return h.trim(); })
+        .filter(Boolean);
+
+      if (horairesDisponibles.includes(horaire)) {
+        stats.presents++;
+      }
+    });
+
+    return stats;
+  });
+}
+
+function sbStatutRappelJour(competition, rappel, lectureRappelDisponible) {
+  if (!competition?.rappel_presence_active) return "desactive";
+  if (!competition?.heure_rappel_presence) return "desactive";
+  if (!lectureRappelDisponible) return "indisponible";
+  if (!rappel) return "pas_encore_envoye";
+
+  const statut = sbNormaliserStatut(rappel.statut);
+  if (statut === "envoye") return "envoye";
+  if (statut === "aucun_joueur") return "aucun_joueur";
+  if (statut === "erreur") return "erreur";
+  if (statut === "en_cours") return "en_cours";
+
+  return "pas_encore_envoye";
+}
+
 function sbHorairesJournal(horaires) {
   return sbTexte(horaires)
     .split(",")
@@ -402,6 +558,9 @@ async function apiSupabase(action, parametres) {
 
     case "chargerDonneesOfficierInitiales":
       return chargerDonneesOfficierInitialesSupabase();
+
+    case "chargerAujourdHuiOfficier":
+      return chargerAujourdHuiOfficierSupabase(parametres.utilisateur);
 
     case "genererTableauPresences":
       return genererTableauPresencesSupabase(
@@ -1579,6 +1738,220 @@ async function chargerJoueursSansReponseSupabase(idCompetition) {
     succes: true,
     nombre: joueursSansReponse.length,
     joueurs: joueursSansReponse
+  };
+}
+
+async function chargerAujourdHuiOfficierSupabase(utilisateur) {
+  if (
+    !sbEstSuperAdminPseudo(utilisateur) &&
+    !(await sbUtilisateurEstOfficier(utilisateur))
+  ) {
+    return sbErreur("Accès refusé : seul un officier peut consulter la page Présences du jour.");
+  }
+
+  const dateIso = sbDateIsoFranceAujourdhui();
+  const dateInfoJour = {
+    dateCompetition: sbFormatDateFR(dateIso),
+    dateAffichage: sbDateAffichage(dateIso),
+    jourCourt: sbJourCourt(dateIso),
+    jourNumero: sbFormatDateFR(dateIso).slice(0, 2),
+    moisCourt: sbMoisCourt(dateIso),
+    horaires: ""
+  };
+
+  const { data: datesJour, error: erreurDates } = await supabaseClient
+    .from("dates_competition")
+    .select("id,competition_id,date_competition,horaires")
+    .eq("date_competition", dateIso)
+    .order("competition_id", { ascending: true });
+
+  if (erreurDates) return sbErreur(erreurDates.message);
+
+  const idsCompetitions = Array.from(new Set(
+    (datesJour || []).map(function (date) {
+      return Number(date.competition_id);
+    }).filter(Boolean)
+  ));
+
+  if (idsCompetitions.length === 0) {
+    return {
+      succes: true,
+      dateIso: dateIso,
+      dateAffichage: dateInfoJour.dateAffichage,
+      competitions: [],
+      resume: {
+        competitions: 0,
+        presents: 0,
+        remplacants: 0,
+        absents: 0,
+        sansReponse: 0
+      }
+    };
+  }
+
+  const { data: competitionsBrutes, error: erreurCompetitions } = await supabaseClient
+    .from("competitions")
+    .select("id,nom,statut,roles_autorises,description,rappel_presence_active,heure_rappel_presence")
+    .in("id", idsCompetitions);
+
+  if (erreurCompetitions) return sbErreur(erreurCompetitions.message);
+
+  const { data: joueursBruts, error: erreurJoueurs } = await supabaseClient
+    .from("joueurs")
+    .select("id,pseudo,roles,statut,discord_id,discord_username,discord_lie_a")
+    .order("pseudo", { ascending: true });
+
+  if (erreurJoueurs) return sbErreur(erreurJoueurs.message);
+
+  const { data: presencesJour, error: erreurPresences } = await supabaseClient
+    .from("presences")
+    .select("id,competition_id,pseudo,statut,horaires_disponibles,date_competition,derniere_modification")
+    .in("competition_id", idsCompetitions)
+    .eq("date_competition", dateIso)
+    .order("id", { ascending: true });
+
+  if (erreurPresences) return sbErreur(erreurPresences.message);
+
+  let rappelsJour = [];
+  let lectureRappelsDisponible = true;
+
+  const { data: rappelsData, error: erreurRappels } = await supabaseClient
+    .from("rappels_presence_discord")
+    .select("competition_id,date_competition,heure_programmee,statut,envoye_a,erreur,nb_joueurs,nb_mentions,nb_sans_discord,nb_messages,updated_at,created_at")
+    .in("competition_id", idsCompetitions)
+    .eq("date_competition", dateIso)
+    .order("updated_at", { ascending: false });
+
+  if (erreurRappels) {
+    lectureRappelsDisponible = false;
+  } else {
+    rappelsJour = rappelsData || [];
+  }
+
+  const competitionsParId = {};
+  (competitionsBrutes || []).forEach(function (competition) {
+    competitionsParId[Number(competition.id)] = competition;
+  });
+
+  const rappelsParCompetition = {};
+  (rappelsJour || []).forEach(function (rappel) {
+    const idCompetition = Number(rappel.competition_id);
+    if (!rappelsParCompetition[idCompetition]) {
+      rappelsParCompetition[idCompetition] = rappel;
+    }
+  });
+
+  const presencesParCompetitionPseudo = {};
+  (presencesJour || []).forEach(function (presence) {
+    const cle = Number(presence.competition_id) + "|" + sbCle(presence.pseudo);
+    if (!presencesParCompetitionPseudo[cle]) {
+      presencesParCompetitionPseudo[cle] = [];
+    }
+    presencesParCompetitionPseudo[cle].push(presence);
+  });
+
+  const joueursActifs = (joueursBruts || []).filter(function (joueur) {
+    return sbCle(joueur.statut) === "actif" && Boolean(sbTexte(joueur.pseudo));
+  });
+
+  const resume = {
+    competitions: 0,
+    presents: 0,
+    remplacants: 0,
+    absents: 0,
+    sansReponse: 0
+  };
+
+  const competitions = (datesJour || []).map(function (dateBrute) {
+    const idCompetition = Number(dateBrute.competition_id);
+    const competitionBrute = competitionsParId[idCompetition] || {};
+    const competition = sbCompetitionObj(competitionBrute);
+    const dateInfo = sbDateObj(dateBrute);
+    const rappel = rappelsParCompetition[idCompetition] || null;
+    const rappelActif = competition.rappelPresenceActive === true &&
+      Boolean(competition.heureRappelPresence);
+
+    const joueursConcernes = joueursActifs.filter(function (joueur) {
+      return sbJoueurAutorisePourCompetition(joueur, competitionBrute);
+    });
+
+    const sansReponseAvecDiscord = [];
+    const sansReponseSansDiscord = [];
+
+    const lignes = joueursConcernes.map(function (joueur) {
+      const clePresence = idCompetition + "|" + sbCle(joueur.pseudo);
+      const presencesJoueur = presencesParCompetitionPseudo[clePresence] || [];
+      const disponibilite = sbDisponibiliteDepuisPresencesJour(dateInfo, presencesJoueur);
+
+      if (sbPresenceJourSansReponse(presencesJoueur)) {
+        const joueurSansReponse = {
+          pseudo: joueur.pseudo,
+          roles: joueur.roles || "",
+          discordUsername: joueur.discord_username || ""
+        };
+
+        if (sbJoueurDiscordLie(joueur)) {
+          sansReponseAvecDiscord.push(joueurSansReponse);
+        } else {
+          sansReponseSansDiscord.push(joueurSansReponse);
+        }
+      }
+
+      return {
+        pseudo: joueur.pseudo,
+        roles: joueur.roles || "",
+        discordUsername: joueur.discord_username || "",
+        discordLie: sbJoueurDiscordLie(joueur),
+        disponibilites: [disponibilite]
+      };
+    });
+
+    const stats = sbCalculerStatsJour(lignes);
+    const effectifParHoraire = sbCalculerEffectifHoraireJour(dateInfo, lignes);
+
+    resume.competitions++;
+    resume.presents += stats.presents;
+    resume.remplacants += stats.remplacants;
+    resume.absents += stats.absents;
+    resume.sansReponse += stats.sansReponse;
+
+    return {
+      id: idCompetition,
+      nom: competition.nom || "Compétition inconnue",
+      statut: competition.statut || "",
+      rolesAutorises: competition.rolesAutorises || "",
+      description: competition.description || "",
+      date: dateInfo,
+      rappel: {
+        actif: rappelActif,
+        heureProgrammee: competition.heureRappelPresence || "",
+        statutJour: sbStatutRappelJour(competitionBrute, rappel, lectureRappelsDisponible),
+        statut: rappel?.statut || "",
+        envoyeA: rappel?.envoye_a || "",
+        erreur: rappel?.erreur || "",
+        nbJoueurs: Number(rappel?.nb_joueurs || 0),
+        nbMentions: Number(rappel?.nb_mentions || 0),
+        nbSansDiscord: Number(rappel?.nb_sans_discord || 0),
+        nbMessages: Number(rappel?.nb_messages || 0),
+        lectureDisponible: lectureRappelsDisponible
+      },
+      stats: stats,
+      effectifParHoraire: effectifParHoraire,
+      joueursSansReponse: {
+        total: sansReponseAvecDiscord.length + sansReponseSansDiscord.length,
+        avecDiscord: sansReponseAvecDiscord,
+        sansDiscord: sansReponseSansDiscord
+      },
+      lignes: lignes
+    };
+  });
+
+  return {
+    succes: true,
+    dateIso: dateIso,
+    dateAffichage: dateInfoJour.dateAffichage,
+    competitions: competitions,
+    resume: resume
   };
 }
 
