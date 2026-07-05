@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SITE_URL = "https://mpp-clan.fr";
+const SITE_URL = "https://mpp-clan.fr/";
 const TIMEZONE_FRANCE = "Europe/Paris";
 const TYPE_RAPPEL = "sans_reponse_17h";
 const LIMITE_DISCORD = 1900;
@@ -40,12 +40,27 @@ type JoueurRelance = {
   discordId: string;
 };
 
-type ReservationRappel = {
+type VerificationRappel = {
   tableDisponible: boolean;
-  reservee: boolean;
   id?: number;
-  dejaEnvoye?: boolean;
+  dejaEnregistre?: boolean;
+  statut?: string;
   erreur?: string;
+};
+
+type EnregistrementRappel = {
+  tableDisponible: boolean;
+  enregistre: boolean;
+  id?: number;
+  dejaEnregistre?: boolean;
+  erreur?: string;
+};
+
+type ErreurSupabase = {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
 };
 
 function reponseJson(donnees: Record<string, unknown>, statut = 200) {
@@ -156,6 +171,35 @@ function erreurTableIntrouvable(error: { code?: string; message?: string } | nul
 function erreurConflitUnique(error: { code?: string; message?: string } | null) {
   if (!error) return false;
   return error.code === "23505" || normaliser(error.message).includes("duplicate key");
+}
+
+function detailsErreurSupabase(error: ErreurSupabase | null) {
+  if (!error) return {};
+  return {
+    code: error.code || "",
+    message: error.message || "",
+    details: error.details || "",
+    hint: error.hint || "",
+  };
+}
+
+function loggerErreurRappel(
+  contexte: string,
+  donnees: {
+    idCompetition: number;
+    competition?: string;
+    dateIso: string;
+    heureProgrammee: string;
+  },
+  error: ErreurSupabase | null,
+) {
+  console.error(contexte, {
+    competition_id: donnees.idCompetition,
+    competition: donnees.competition || "",
+    date_competition: donnees.dateIso,
+    heure_programmee: donnees.heureProgrammee,
+    supabase: detailsErreurSupabase(error),
+  });
 }
 
 async function journaliser(
@@ -303,7 +347,7 @@ function construireMessagesDiscord(
   const lignes: string[] = [];
 
   if (avecDiscord.length > 0) {
-    lignes.push("Joueurs à relancer :");
+    lignes.push("Liste des joueurs n’ayant pas rempli leurs présences :");
     for (const joueur of avecDiscord) {
       lignes.push(`<@${joueur.discordId}>`);
     }
@@ -313,7 +357,7 @@ function construireMessagesDiscord(
     if (lignes.length > 0) lignes.push("");
     lignes.push("Joueurs sans Discord lié :");
     for (const pseudo of sansDiscord) {
-      lignes.push(`- ${pseudo}`);
+      lignes.push(`• ${pseudo}`);
     }
   }
 
@@ -376,62 +420,50 @@ async function envoyerMessageDiscord(
   }
 }
 
-async function reserverRappel(
+async function verifierRappelDejaEnregistre(
   supabase: SupabaseClient,
   idCompetition: number,
   dateIso: string,
-  nbJoueurs: number,
   heureProgrammee: string,
-): Promise<ReservationRappel> {
-  const maintenant = new Date().toISOString();
+  nomCompetition: string,
+): Promise<VerificationRappel> {
   const { data, error } = await supabase
     .from("rappels_presence_discord")
-    .insert([{
-      type_rappel: TYPE_RAPPEL,
-      competition_id: idCompetition,
-      date_competition: dateIso,
-      heure_programmee: heureProgrammee,
-      statut: "en_cours",
-      nb_joueurs: nbJoueurs,
-      created_at: maintenant,
-      updated_at: maintenant,
-    }])
-    .select("id")
-    .single();
+    .select("id,statut")
+    .eq("type_rappel", TYPE_RAPPEL)
+    .eq("competition_id", idCompetition)
+    .eq("date_competition", dateIso)
+    .eq("heure_programmee", heureProgrammee)
+    .limit(1);
 
   if (!error) {
+    const rappel = Array.isArray(data) ? data[0] : null;
     return {
       tableDisponible: true,
-      reservee: true,
-      id: Number(data?.id),
+      dejaEnregistre: Boolean(rappel),
+      id: rappel ? Number(rappel.id) : undefined,
+      statut: rappel ? texte(rappel.statut) : undefined,
     };
   }
 
-  if (erreurTableIntrouvable(error)) {
-    console.warn("Table rappels_presence_discord introuvable:", error.message);
-    return {
-      tableDisponible: false,
-      reservee: true,
-      erreur: error.message,
-    };
-  }
+  loggerErreurRappel(
+    "Verification anti-doublon rappels_presence_discord impossible",
+    {
+      idCompetition,
+      competition: nomCompetition,
+      dateIso,
+      heureProgrammee,
+    },
+    error,
+  );
 
-  if (erreurConflitUnique(error)) {
-    return {
-      tableDisponible: true,
-      reservee: false,
-      dejaEnvoye: true,
-      erreur: error.message,
-    };
-  }
-
-  throw new Error(`Reservation anti-doublon impossible: ${error.message}`);
+  throw new Error(`Verification anti-doublon impossible: ${error.message}`);
 }
 
-async function finaliserRappel(
+async function enregistrerRappel(
   supabase: SupabaseClient,
-  reservation: ReservationRappel,
   donnees: {
+    idCompetition: number;
     nbJoueurs: number;
     nbMentions: number;
     nbSansDiscord: number;
@@ -441,53 +473,68 @@ async function finaliserRappel(
     heureProgrammee: string;
     statut?: string;
   },
-) {
-  if (!reservation.tableDisponible || !reservation.id) return;
-
+): Promise<EnregistrementRappel> {
+  const maintenant = new Date().toISOString();
   const { error } = await supabase
     .from("rappels_presence_discord")
-    .update({
+    .insert([{
+      type_rappel: TYPE_RAPPEL,
+      competition_id: donnees.idCompetition,
+      date_competition: donnees.dateIso,
+      heure_programmee: donnees.heureProgrammee,
       statut: donnees.statut || "envoye",
-      envoye_a: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      envoye_a: maintenant,
       nb_joueurs: donnees.nbJoueurs,
       nb_mentions: donnees.nbMentions,
       nb_sans_discord: donnees.nbSansDiscord,
       nb_messages: donnees.nbMessages,
-      heure_programmee: donnees.heureProgrammee,
       details: {
         competition: donnees.competition,
         date: donnees.dateIso,
         heureProgrammee: donnees.heureProgrammee,
       },
       erreur: null,
-    })
-    .eq("id", reservation.id);
+      created_at: maintenant,
+      updated_at: maintenant,
+    }])
+    .select("id")
+    .single();
 
-  if (error) {
-    console.error("Finalisation anti-doublon impossible:", error.message);
+  if (!error) {
+    return {
+      tableDisponible: true,
+      enregistre: true,
+    };
   }
-}
 
-async function marquerRappelEnErreur(
-  supabase: SupabaseClient,
-  reservation: ReservationRappel,
-  erreur: string,
-) {
-  if (!reservation.tableDisponible || !reservation.id) return;
+  if (erreurConflitUnique(error)) {
+    console.warn("Rappel deja enregistre dans rappels_presence_discord", {
+      competition_id: donnees.idCompetition,
+      competition: donnees.competition,
+      date_competition: donnees.dateIso,
+      heure_programmee: donnees.heureProgrammee,
+    });
 
-  const { error } = await supabase
-    .from("rappels_presence_discord")
-    .update({
-      statut: "erreur",
-      updated_at: new Date().toISOString(),
-      erreur,
-    })
-    .eq("id", reservation.id);
-
-  if (error) {
-    console.error("Marquage erreur anti-doublon impossible:", error.message);
+    return {
+      tableDisponible: true,
+      enregistre: false,
+      dejaEnregistre: true,
+      erreur: error.message,
+    };
   }
+
+  loggerErreurRappel(
+    "Insertion rappels_presence_discord impossible apres envoi Discord",
+    {
+      idCompetition: donnees.idCompetition,
+      competition: donnees.competition,
+      dateIso: donnees.dateIso,
+      heureProgrammee: donnees.heureProgrammee,
+    },
+    error,
+  );
+
+  throw new Error(`Enregistrement anti-doublon impossible: ${error.message}`);
 }
 
 async function traiterCompetition(
@@ -561,31 +608,34 @@ async function traiterCompetition(
     };
   }
 
-  const presences = await chargerPresencesDuJour(supabase, idCompetition, dateIso);
-  const joueursARelancer = joueursSansReponse(joueursActifs, presences);
-
-  const reservation = await reserverRappel(
+  const rappelExistant = await verifierRappelDejaEnregistre(
     supabase,
     idCompetition,
     dateIso,
-    joueursARelancer.length,
     heureRappelPresence,
+    nomCompetition,
   );
 
-  if (!reservation.reservee && reservation.dejaEnvoye) {
+  if (rappelExistant.dejaEnregistre) {
     return {
       idCompetition,
       competition: nomCompetition,
-      joueursRelances: joueursARelancer.length,
+      joueursRelances: 0,
       messagesEnvoyes: 0,
       ignore: true,
-      raison: "rappel_deja_envoye",
+      raison: "rappel_deja_enregistre",
       heureProgrammee: heureRappelPresence,
+      rappelId: rappelExistant.id,
+      statutRappel: rappelExistant.statut,
     };
   }
 
+  const presences = await chargerPresencesDuJour(supabase, idCompetition, dateIso);
+  const joueursARelancer = joueursSansReponse(joueursActifs, presences);
+
   if (joueursARelancer.length === 0) {
-    await finaliserRappel(supabase, reservation, {
+    const enregistrement = await enregistrerRappel(supabase, {
+      idCompetition,
       nbJoueurs: 0,
       nbMentions: 0,
       nbSansDiscord: 0,
@@ -595,6 +645,18 @@ async function traiterCompetition(
       heureProgrammee: heureRappelPresence,
       statut: "aucun_joueur",
     });
+
+    if (enregistrement.dejaEnregistre) {
+      return {
+        idCompetition,
+        competition: nomCompetition,
+        joueursRelances: 0,
+        messagesEnvoyes: 0,
+        ignore: true,
+        raison: "rappel_deja_enregistre",
+        heureProgrammee: heureRappelPresence,
+      };
+    }
 
     await journaliser(
       supabase,
@@ -615,6 +677,7 @@ async function traiterCompetition(
       ignore: false,
       raison: "aucun_joueur_a_relancer",
       heureProgrammee: heureRappelPresence,
+      antiDoublonDisponible: enregistrement.tableDisponible,
     };
   }
 
@@ -635,7 +698,8 @@ async function traiterCompetition(
       );
     }
 
-    await finaliserRappel(supabase, reservation, {
+    const enregistrement = await enregistrerRappel(supabase, {
+      idCompetition,
       nbJoueurs: joueursARelancer.length,
       nbMentions: avecDiscord.length,
       nbSansDiscord: sansDiscord.length,
@@ -656,8 +720,8 @@ async function traiterCompetition(
         `Mentions Discord : ${avecDiscord.length}`,
         `Sans Discord lié : ${sansDiscord.length}`,
         `Messages envoyés : ${messages.length}`,
-        reservation.tableDisponible
-          ? "Anti-doublon : enregistré"
+        enregistrement.tableDisponible
+          ? (enregistrement.enregistre ? "Anti-doublon : enregistré" : "Anti-doublon : déjà enregistré")
           : "Anti-doublon : table rappels_presence_discord absente",
       ].join("\n"),
     );
@@ -671,10 +735,10 @@ async function traiterCompetition(
       messagesEnvoyes: messages.length,
       ignore: false,
       heureProgrammee: heureRappelPresence,
-      antiDoublonDisponible: reservation.tableDisponible,
+      antiDoublonDisponible: enregistrement.tableDisponible,
+      antiDoublonEnregistre: enregistrement.enregistre,
     };
   } catch (error) {
-    await marquerRappelEnErreur(supabase, reservation, String(error));
     throw error;
   }
 }
@@ -709,6 +773,11 @@ Deno.serve(async (req) => {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${serviceRoleKey}`,
+      },
     },
   });
 

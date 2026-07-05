@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.12.1 - Migration complète Supabase
+   Version Alpha 0.12.2 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -15,6 +15,7 @@ const SUPABASE_KEY = "sb_publishable_Twp9mcx7CQdS_weNNUPtTQ_8V1s_Z_R";
 
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const sbCacheNomsCompetitions = {};
+const SB_TYPE_RAPPEL_PRESENCES_SANS_REPONSE = "sans_reponse_17h";
 
 /* ==========================================================
    OUTILS GÉNÉRAUX
@@ -33,6 +34,10 @@ function sbDiscordId(valeur) {
 function sbHeureHHMM(valeur) {
   const match = sbTexte(valeur).match(/^([01]\d|2[0-3]):([0-5]\d)/);
   return match ? match[1] + ":" + match[2] : "";
+}
+
+function sbCleRappelJour(idCompetition, heure) {
+  return Number(idCompetition) + "|" + sbHeureHHMM(heure);
 }
 
 function sbHeureRappelPresenceOuNull(rappelActif, heure) {
@@ -431,11 +436,14 @@ function sbStatutRappelJour(competition, rappel, lectureRappelDisponible) {
   if (!lectureRappelDisponible) return "indisponible";
   if (!rappel) return "pas_encore_envoye";
 
+  if (sbTexte(rappel.erreur)) return "erreur";
+
   const statut = sbNormaliserStatut(rappel.statut);
   if (statut === "envoye") return "envoye";
   if (statut === "aucun_joueur") return "aucun_joueur";
   if (statut === "erreur") return "erreur";
   if (statut === "en_cours") return "en_cours";
+  if (sbTexte(rappel.envoye_a)) return "envoye";
 
   return "pas_encore_envoye";
 }
@@ -1826,7 +1834,8 @@ async function chargerAujourdHuiOfficierSupabase(utilisateur) {
 
   const { data: rappelsData, error: erreurRappels } = await supabaseClient
     .from("rappels_presence_discord")
-    .select("competition_id,date_competition,heure_programmee,statut,envoye_a,erreur,nb_joueurs,nb_mentions,nb_sans_discord,nb_messages,updated_at,created_at")
+    .select("type_rappel,competition_id,date_competition,heure_programmee,statut,envoye_a,erreur,nb_joueurs,nb_mentions,nb_sans_discord,nb_messages,updated_at")
+    .eq("type_rappel", SB_TYPE_RAPPEL_PRESENCES_SANS_REPONSE)
     .in("competition_id", idsCompetitions)
     .eq("date_competition", dateIso)
     .order("updated_at", { ascending: false });
@@ -1842,11 +1851,11 @@ async function chargerAujourdHuiOfficierSupabase(utilisateur) {
     competitionsParId[Number(competition.id)] = competition;
   });
 
-  const rappelsParCompetition = {};
+  const rappelsParCompetitionHeure = {};
   (rappelsJour || []).forEach(function (rappel) {
-    const idCompetition = Number(rappel.competition_id);
-    if (!rappelsParCompetition[idCompetition]) {
-      rappelsParCompetition[idCompetition] = rappel;
+    const cleRappel = sbCleRappelJour(rappel.competition_id, rappel.heure_programmee);
+    if (!rappelsParCompetitionHeure[cleRappel]) {
+      rappelsParCompetitionHeure[cleRappel] = rappel;
     }
   });
 
@@ -1876,7 +1885,9 @@ async function chargerAujourdHuiOfficierSupabase(utilisateur) {
     const competitionBrute = competitionsParId[idCompetition] || {};
     const competition = sbCompetitionObj(competitionBrute);
     const dateInfo = sbDateObj(dateBrute);
-    const rappel = rappelsParCompetition[idCompetition] || null;
+    const rappel = rappelsParCompetitionHeure[
+      sbCleRappelJour(idCompetition, competition.heureRappelPresence)
+    ] || null;
     const rappelActif = competition.rappelPresenceActive === true &&
       Boolean(competition.heureRappelPresence);
 

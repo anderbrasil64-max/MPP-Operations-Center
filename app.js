@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.12.1 - Supabase
+   Version Alpha 0.12.2 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.12.1 - Supabase";
+const VERSION_SITE = "Alpha 0.12.2 - Supabase";
 const CLE_PSEUDO_SAUVEGARDE = "mpp_saved_pseudo";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
@@ -1208,7 +1208,7 @@ function formaterStatutRappelAujourdHui(rappel) {
     },
     envoye: {
       classe: "today-reminder-sent",
-      texte: "Envoyé"
+      texte: "Rappel envoyé"
     },
     aucun_joueur: {
       classe: "today-reminder-clear",
@@ -1216,7 +1216,7 @@ function formaterStatutRappelAujourdHui(rappel) {
     },
     erreur: {
       classe: "today-reminder-error",
-      texte: "Erreur"
+      texte: "Erreur d’envoi"
     },
     en_cours: {
       classe: "today-reminder-pending",
