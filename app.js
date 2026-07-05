@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.10.0 - Supabase
+   Version Alpha 0.10.1 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.10.0 - Supabase";
+const VERSION_SITE = "Alpha 0.10.1 - Supabase";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
 let cacheFrontend = {
@@ -584,6 +584,13 @@ function rendreSectionDiscordAccueil() {
   const classeStatut = discordLie
     ? "discord-status-text discord-status-text-linked"
     : "discord-status-text discord-status-text-pending";
+  const actionLiaison = discordLie
+    ? ""
+    : `
+        <button onclick="afficherLiaisonDiscord()" class="secondary-button discord-link-button">
+          💬 Lier mon Discord
+        </button>
+      `;
 
   return `
     <section class="home-section">
@@ -593,9 +600,7 @@ function rendreSectionDiscordAccueil() {
           <p class="${classeStatut}">${escapeHTML(statutTexte)}</p>
           <p class="home-card-text">${escapeHTML(detailTexte)}</p>
         </div>
-        <button onclick="afficherLiaisonDiscord()" class="secondary-button discord-link-button">
-          💬 Lier mon Discord
-        </button>
+        ${actionLiaison}
       </div>
     </section>
   `;
