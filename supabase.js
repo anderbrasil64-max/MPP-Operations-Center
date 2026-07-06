@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.12.3 - Migration complète Supabase
+   Version Alpha 0.12.4 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -583,7 +583,8 @@ async function apiSupabase(action, parametres) {
       return modifierStatutCompetitionSupabase(
         parametres.idCompetition,
         parametres.nouveauStatut,
-        parametres.utilisateur
+        parametres.utilisateur,
+        parametres.motDePasse
       );
 
     case "creerCompetitionComplete":
@@ -1426,34 +1427,44 @@ async function creerCompetitionCompleteSupabase(config, utilisateur) {
   };
 }
 
-async function modifierStatutCompetitionSupabase(idCompetition, nouveauStatut, utilisateur) {
-  if (!sbEstSuperAdminPseudo(utilisateur) && !(await sbUtilisateurEstOfficier(utilisateur))) {
-    return sbErreur("Accès refusé : seul un officier peut modifier le statut.");
+async function modifierStatutCompetitionSupabase(idCompetition, nouveauStatut, utilisateur, motDePasse) {
+  const motDePasseTexte = String(motDePasse || "");
+
+  if (!motDePasseTexte) {
+    return sbErreur("Mot de passe officier requis.");
   }
 
-  if (sbNormaliserStatut(nouveauStatut) === "archivee" && !sbEstSuperAdminPseudo(utilisateur)) {
-    return sbErreur("Accès refusé : seul le Super Admin peut archiver.");
-  }
-
-  const { error } = await supabaseClient
-    .from("competitions")
-    .update({ statut: nouveauStatut })
-    .eq("id", Number(idCompetition));
-
-  if (error) return sbErreur(error.message);
-
-  const nomCompetition = await sbNomCompetitionDepuisId(idCompetition);
-
-  await sbJournaliser(
-    utilisateur,
-    "Statut de compétition modifié",
-    "Compétition : " + nomCompetition +
-      "\nNouveau statut : " + nouveauStatut
+  const { data, error } = await supabaseClient.rpc(
+    "modifier_statut_competition_site",
+    {
+      p_utilisateur: sbTexte(utilisateur),
+      p_mot_de_passe: motDePasseTexte,
+      p_competition_id: Number(idCompetition),
+      p_nouveau_statut: sbTexte(nouveauStatut)
+    }
   );
+
+  if (error) {
+    console.warn("Erreur RPC modifier_statut_competition_site", error);
+    return sbErreur("Modification du statut impossible.");
+  }
+
+  const resultat = Array.isArray(data) ? data[0] : data;
+  const succesRPC = resultat?.succes === true || resultat?.success === true;
+
+  if (!resultat || !succesRPC) {
+    return sbErreur(
+      resultat?.message ||
+        "Le statut n'a pas pu être modifié."
+    );
+  }
 
   return {
     succes: true,
-    message: "Statut modifié."
+    message: resultat.message || "Statut modifié.",
+    idCompetition: resultat.idCompetition || resultat.id_competition || Number(idCompetition),
+    ancienStatut: resultat.ancienStatut || resultat.ancien_statut || "",
+    nouveauStatut: resultat.nouveauStatut || resultat.nouveau_statut || nouveauStatut
   };
 }
 

@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.12.3 - Supabase
+   Version Alpha 0.12.4 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.12.3 - Supabase";
+const VERSION_SITE = "Alpha 0.12.4 - Supabase";
 const CLE_PSEUDO_SAUVEGARDE = "mpp_saved_pseudo";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
@@ -2071,12 +2071,85 @@ function supprimerCompetitionDepuisSite(idCompetition) {
 
 function changerStatutCompetition(idCompetition, nouveauStatut) {
   afficherConfirmation("Modifier le statut ?", "Confirmer le passage de cette compétition en statut : " + nouveauStatut + " ?", function () {
-    appelAPI("modifierStatutCompetition", { idCompetition, nouveauStatut, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
-      if (!data.succes) return afficherMessageModal("Erreur", data.message);
-      viderCacheFrontend();
-      afficherMessageModal("Statut modifié", "La compétition est maintenant en statut : " + nouveauStatut, afficherGestionCompetitions);
-    });
+    demanderMotDePasseChangementStatut(idCompetition, nouveauStatut);
   });
+}
+
+function demanderMotDePasseChangementStatut(idCompetition, nouveauStatut) {
+  fermerModal();
+
+  const modal = document.createElement("div");
+  modal.id = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal-box">
+      <h2>Confirmer le statut</h2>
+      <div class="modal-message">
+        <p>Entre ton mot de passe officier pour passer la compétition en statut :</p>
+        <p><strong>${escapeHTML(nouveauStatut)}</strong></p>
+      </div>
+      <label for="motDePasseStatutCompetition" class="modal-confirm-label">
+        Mot de passe officier
+      </label>
+      <input
+        type="password"
+        id="motDePasseStatutCompetition"
+        class="modal-confirm-input"
+        autocomplete="current-password"
+      >
+      <div class="modal-actions">
+        <button class="secondary-button" id="annulerStatutCompetition">Annuler</button>
+        <button id="confirmerStatutCompetition">Confirmer</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const champMotDePasse = document.getElementById("motDePasseStatutCompetition");
+
+  function validerMotDePasseStatut() {
+    const motDePasse = champMotDePasse ? champMotDePasse.value : "";
+
+    if (!motDePasse) {
+      return afficherMessageModal("Mot de passe requis", "Merci de saisir le mot de passe officier.");
+    }
+
+    fermerModal();
+    executerChangementStatutCompetition(idCompetition, nouveauStatut, motDePasse);
+  }
+
+  document.getElementById("annulerStatutCompetition").onclick = fermerModal;
+  document.getElementById("confirmerStatutCompetition").onclick = validerMotDePasseStatut;
+
+  champMotDePasse.onkeydown = function (event) {
+    if (event.key === "Enter") {
+      validerMotDePasseStatut();
+    }
+  };
+
+  champMotDePasse.focus();
+}
+
+function executerChangementStatutCompetition(idCompetition, nouveauStatut, motDePasse) {
+  afficherChargement("Modification du statut", "Validation sécurisée en cours...");
+
+  appelAPISensible(
+    "modifierStatutCompetition",
+    {
+      idCompetition,
+      nouveauStatut,
+      utilisateur: utilisateurConnecte.joueur.pseudo,
+      motDePasse
+    },
+    function (data) {
+      if (!data.succes) {
+        return afficherMessageModal("Erreur", escapeHTML(data.message || "Le statut n'a pas pu être modifié."), afficherGestionCompetitions);
+      }
+
+      viderCacheFrontend();
+      afficherMessageModal("Statut modifié", escapeHTML(data.message || "La compétition est maintenant en statut : " + nouveauStatut), afficherGestionCompetitions);
+    }
+  );
 }
 
 function afficherFormulaireCreationCompetition() {
