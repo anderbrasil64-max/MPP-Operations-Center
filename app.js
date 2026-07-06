@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.12.2 - Supabase
+   Version Alpha 0.12.3 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.12.2 - Supabase";
+const VERSION_SITE = "Alpha 0.12.3 - Supabase";
 const CLE_PSEUDO_SAUVEGARDE = "mpp_saved_pseudo";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
@@ -41,22 +41,9 @@ let donneesAujourdHuiOfficier = null;
 
 const DUREE_CACHE_FRONT_MS = 5 * 60 * 1000;
 
-function lancerVerificationsInitiales() {
-  appliquerOuverturesFermeturesAutomatiquesSupabase()
-    .then(function (resultat) {
-      if (resultat && resultat.succes === false) {
-        console.warn("Verification automatique non bloquante :", resultat.message || resultat);
-      }
-    })
-    .catch(function (erreur) {
-      console.warn("Verification automatique non bloquante impossible :", erreur);
-    });
-}
-
 function initialiserApplication() {
   afficherConnexion();
   afficherVersionSite();
-  lancerVerificationsInitiales();
 }
 
 if (document.readyState === "loading") {
