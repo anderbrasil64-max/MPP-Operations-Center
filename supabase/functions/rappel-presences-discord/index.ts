@@ -320,16 +320,14 @@ function separerJoueursDiscord(joueurs: Joueur[]) {
 function introDiscord(nomCompetition: string, dateFr: string, suite = false) {
   return [
     `⏰ Rappel présences — MPP${suite ? " (suite)" : ""}`,
-    "",
-    `🏆 Compétition : ${nomCompetition}`,
-    `📅 Aujourd'hui : ${dateFr}`,
-    "",
+    [
+      `🏆 Compétition : ${nomCompetition}`,
+      `📅 Aujourd'hui : ${dateFr}`,
+    ].join("\n"),
     "Les joueurs suivants n'ont pas encore renseigné leurs présences pour ce soir.",
-    "",
     "Merci de remplir vos disponibilités avant 19h00 :",
     SITE_URL,
-    "",
-  ].join("\n");
+  ].join("\n\n");
 }
 
 function idsMentionnes(contenu: string) {
@@ -344,43 +342,43 @@ function construireMessagesDiscord(
   avecDiscord: JoueurRelance[],
   sansDiscord: string[],
 ) {
-  const lignes: string[] = [];
+  const blocs: string[] = [];
 
   if (avecDiscord.length > 0) {
-    lignes.push("Liste des joueurs n’ayant pas rempli leurs présences :");
-    for (const joueur of avecDiscord) {
-      lignes.push(`<@${joueur.discordId}>`);
-    }
+    blocs.push([
+      "Liste des joueurs n’ayant pas rempli leurs présences :",
+      "",
+      ...avecDiscord.map((joueur) => `<@${joueur.discordId}>`),
+    ].join("\n"));
   }
 
   if (sansDiscord.length > 0) {
-    if (lignes.length > 0) lignes.push("");
-    lignes.push("Joueurs sans Discord lié :");
-    for (const pseudo of sansDiscord) {
-      lignes.push(`• ${pseudo}`);
-    }
+    blocs.push([
+      "Joueurs sans Discord lié :",
+      "",
+      ...sansDiscord.map((pseudo) => `• ${pseudo}`),
+    ].join("\n"));
   }
 
   const messages: Array<{ contenu: string; usersAutorises: string[] }> = [];
   let contenu = introDiscord(nomCompetition, dateFr);
-  let lignesDansMessage = 0;
+  let blocsDansMessage = 0;
 
-  for (const ligne of lignes) {
-    const separateur = contenu.endsWith("\n") ? "" : "\n";
-    const candidat = `${contenu}${separateur}${ligne}`;
+  for (const bloc of blocs) {
+    const candidat = [contenu, bloc].filter(Boolean).join("\n\n");
 
-    if (lignesDansMessage > 0 && candidat.length > LIMITE_DISCORD) {
+    if (blocsDansMessage > 0 && candidat.length > LIMITE_DISCORD) {
       const contenuFinal = contenu.trimEnd();
       messages.push({
         contenu: contenuFinal,
         usersAutorises: idsMentionnes(contenuFinal),
       });
 
-      contenu = `${introDiscord(nomCompetition, dateFr, true)}${ligne}`;
-      lignesDansMessage = 1;
+      contenu = [introDiscord(nomCompetition, dateFr, true), bloc].join("\n\n");
+      blocsDansMessage = 1;
     } else {
       contenu = candidat;
-      lignesDansMessage += 1;
+      blocsDansMessage += 1;
     }
   }
 
@@ -494,7 +492,6 @@ async function enregistrerRappel(
         heureProgrammee: donnees.heureProgrammee,
       },
       erreur: null,
-      created_at: maintenant,
       updated_at: maintenant,
     }])
     .select("id")
