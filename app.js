@@ -72,12 +72,10 @@ function viderCacheFrontend() {
 }
 
 function escapeHTML(valeur) {
-  return String(valeur ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+  return String(valeur ?? "").replace(/[&<>"']/g, function(char) {
+    const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
+    return map[char];
+  });
 }
 
 function jsString(valeur) {
