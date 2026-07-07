@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.12.5 - Migration complète Supabase
+   Version Alpha 0.12.5.2 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -2124,38 +2124,32 @@ async function verifierMotDePasseSupabase(pseudo, mdp) {
 }
 
 async function changerMotDePasseSupabase(pseudo, ancienMdp, nouveauMdp) {
-  const verification = await verifierMotDePasseSupabase(pseudo, ancienMdp);
-
-  if (!verification.succes) {
-    return verification;
-  }
-
-  const { error } = await supabaseClient
-    .from("joueurs")
-    .update({
-      mot_de_passe: String(nouveauMdp),
-      mot_de_passe_modifie: true,
-      derniere_modification: new Date().toISOString()
-    })
-    .ilike("pseudo", sbTexte(pseudo));
+  const { data, error } = await supabaseClient.rpc(
+    "changer_mot_de_passe_site",
+    {
+      p_utilisateur: sbTexte(pseudo),
+      p_ancien_mot_de_passe: String(ancienMdp || ""),
+      p_nouveau_mot_de_passe: String(nouveauMdp || "")
+    }
+  );
 
   if (error) {
     return {
       succes: false,
-      message: error.message
+      message: "Impossible de modifier le mot de passe."
     };
   }
 
-  await sbJournaliser(
-    pseudo,
-    "Mot de passe modifié",
-    "Mot de passe personnel modifié."
-  );
+  const resultat = Array.isArray(data) ? data[0] : data;
 
-  return {
-    succes: true,
-    message: "Mot de passe modifié avec succès."
-  };
+  if (!resultat || resultat.succes !== true) {
+    return {
+      succes: false,
+      message: resultat?.message || "Impossible de modifier le mot de passe."
+    };
+  }
+
+  return resultat;
 }
 
 async function appliquerOuverturesFermeturesAutomatiquesSupabase() {
