@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.12.5.2 - Migration complète Supabase
+   Version Alpha 0.12.5.3 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -789,7 +789,7 @@ async function identifierUtilisateurSupabase(pseudo) {
 
   const { data, error } = await supabaseClient
     .from("joueurs")
-    .select("*")
+    .select("id,pseudo,roles,statut,discord_id,discord_username,discord_lie_a,date_ajout,derniere_connexion,derniere_modification")
     .ilike("pseudo", pseudoRecherche)
     .limit(1);
 
@@ -830,7 +830,7 @@ async function identifierUtilisateurSupabase(pseudo) {
 async function chargerJoueursSupabase() {
   const { data, error } = await supabaseClient
     .from("joueurs")
-    .select("*")
+    .select("id,pseudo,roles,statut,discord_id,discord_username,discord_lie_a,date_ajout,derniere_connexion,derniere_modification")
     .order("pseudo", { ascending: true });
 
   if (error) return sbErreur(error.message);
@@ -945,7 +945,7 @@ async function modifierJoueurSupabase(
 
   const { data: joueursExistants, error: erreurJoueurExistant } = await supabaseClient
     .from("joueurs")
-    .select("*")
+    .select("id,pseudo,roles,statut,discord_id")
     .eq("id", Number(idJoueur))
     .limit(1);
 
@@ -1038,7 +1038,7 @@ async function supprimerJoueurSupabase(idJoueur, utilisateur, motDePasse) {
 
   const { data: joueurs, error: erreurJoueur } = await supabaseClient
     .from("joueurs")
-    .select("*")
+    .select("id,pseudo,roles,statut")
     .eq("id", Number(idJoueur))
     .limit(1);
 
@@ -1107,7 +1107,7 @@ async function sbUtilisateurEstSuperAdmin(pseudo) {
 
   const { data, error } = await supabaseClient
     .from("joueurs")
-    .select("*")
+    .select("pseudo,roles,statut")
     .ilike("pseudo", sbTexte(pseudo))
     .limit(1);
 
@@ -1120,7 +1120,7 @@ async function sbUtilisateurEstSuperAdmin(pseudo) {
 async function sbUtilisateurEstOfficier(pseudo) {
   const { data, error } = await supabaseClient
     .from("joueurs")
-    .select("*")
+    .select("pseudo,roles,statut")
     .ilike("pseudo", sbTexte(pseudo))
     .limit(1);
 
