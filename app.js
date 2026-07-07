@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.12.4 - Supabase
+   Version Alpha 0.12.5 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.12.4 - Supabase";
+const VERSION_SITE = "Alpha 0.12.5 - Supabase";
 const CLE_PSEUDO_SAUVEGARDE = "mpp_saved_pseudo";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;

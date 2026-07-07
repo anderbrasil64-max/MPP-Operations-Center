@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.12.4 - Migration complète Supabase
+   Version Alpha 0.12.5 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -2096,58 +2096,31 @@ async function chargerJournalActiviteSupabase() {
 }
 
 async function verifierMotDePasseSupabase(pseudo, mdp) {
-  const { data, error } = await supabaseClient
-    .from("joueurs")
-    .select("pseudo, roles, statut, mot_de_passe")
-    .ilike("pseudo", sbTexte(pseudo))
-    .limit(1);
+  const { data, error } = await supabaseClient.rpc(
+    "verifier_mot_de_passe_site",
+    {
+      p_utilisateur: sbTexte(pseudo),
+      p_mot_de_passe: String(mdp || "")
+    }
+  );
 
   if (error) {
     return {
       succes: false,
-      message: error.message
+      message: "Impossible de vérifier le mot de passe."
     };
   }
 
-  if (!data || data.length === 0) {
+  const resultat = Array.isArray(data) ? data[0] : data;
+
+  if (!resultat || resultat.succes !== true) {
     return {
       succes: false,
-      message: "Joueur introuvable."
+      message: resultat?.message || "Mot de passe incorrect."
     };
   }
 
-  const joueur = data[0];
-
-  if (sbCle(joueur.statut) !== "actif") {
-    return {
-      succes: false,
-      message: "Ce compte n'est pas actif."
-    };
-  }
-
-  const roles = sbRolesArray(joueur.roles);
-
-  let motDePasseAttendu = joueur.mot_de_passe;
-
-  if (!motDePasseAttendu) {
-    if (roles.includes("superadmin")) {
-      motDePasseAttendu = "superAD";
-    } else if (roles.includes("officier")) {
-      motDePasseAttendu = "offMPP";
-    }
-  }
-
-  if (String(mdp) !== String(motDePasseAttendu)) {
-    return {
-      succes: false,
-      message: "Mot de passe incorrect."
-    };
-  }
-
-  return {
-    succes: true,
-    message: "Mot de passe validé."
-  };
+  return resultat;
 }
 
 async function changerMotDePasseSupabase(pseudo, ancienMdp, nouveauMdp) {
