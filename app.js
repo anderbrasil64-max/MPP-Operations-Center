@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.12.5.4.2 - Supabase
+   Version Alpha 0.12.6 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.12.5.4.2 - Supabase";
+const VERSION_SITE = "Alpha 0.12.6 - Supabase";
 const CLE_PSEUDO_SAUVEGARDE = "mpp_saved_pseudo";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
@@ -2050,19 +2050,26 @@ function confirmerSuppressionCompetition(idCompetition, nomCompetition) {
 
 
 function supprimerCompetitionDepuisSite(idCompetition) {
-  appelAPI(
-    "supprimerCompetition",
-    {
-      idCompetition,
-      utilisateur: utilisateurConnecte.joueur.pseudo
-    },
-    function (data) {
-      if (!data.succes) {
-        return afficherMessageModal("Erreur", data.message);
-      }
+  demanderMotDePasseActionSensible(
+    "Confirmer la suppression",
+    "Entre ton mot de passe SuperAdmin pour supprimer définitivement cette compétition.",
+    function (motDePasse) {
+      appelAPISensible(
+        "supprimerCompetition",
+        {
+          idCompetition,
+          utilisateur: utilisateurConnecte.joueur.pseudo,
+          motDePasse
+        },
+        function (data) {
+          if (!data.succes) {
+            return afficherMessageModal("Erreur", data.message);
+          }
 
-      viderCacheFrontend();
-      afficherMessageModal("Compétition supprimée", data.message, afficherGestionCompetitions);
+          viderCacheFrontend();
+          afficherMessageModal("Compétition supprimée", data.message, afficherGestionCompetitions);
+        }
+      );
     }
   );
 }
@@ -2639,12 +2646,22 @@ function afficherRecapCreationCompetition(config) {
 
 function confirmerCreationCompetitionComplete(configJSON) {
   const config = JSON.parse(configJSON);
-  afficherChargement("Création en cours...", "La compétition et les dates sont enregistrées en une seule opération.");
-  appelAPI("creerCompetitionComplete", { config: JSON.stringify(config), utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
-    if (!data.succes) return afficherMessageModal("Erreur", data.message);
-    viderCacheFrontend();
-    afficherMessageModal("Compétition créée", "La compétition et ses dates ont bien été créées.", afficherGestionCompetitions);
-  });
+
+  demanderMotDePasseActionSensible(
+    "Confirmer la création",
+    "Entre ton mot de passe officier pour créer cette compétition.",
+    function (motDePasse) {
+      appelAPISensible("creerCompetitionComplete", {
+        config: JSON.stringify(config),
+        utilisateur: utilisateurConnecte.joueur.pseudo,
+        motDePasse
+      }, function (data) {
+        if (!data.succes) return afficherMessageModal("Erreur", data.message);
+        viderCacheFrontend();
+        afficherMessageModal("Compétition créée", "La compétition et ses dates ont bien été créées.", afficherGestionCompetitions);
+      });
+    }
+  );
 }
 
 function afficherGestionDatesCompetition(idCompetition, nomCompetition) {
@@ -2671,11 +2688,24 @@ function ajouterDateDepuisSite(idCompetition, nomCompetition) {
   const dateChoisie = document.getElementById("nouvelleDateCompetition").value;
   const horaires = document.getElementById("nouveauxHorairesCompetition").value.trim();
   if (!dateChoisie) return afficherMessageModal("Erreur", "Merci de sélectionner une date.");
-  appelAPI("ajouterDateCompetition", { idCompetition, dateCompetition: dateChoisie, horaires, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
-    if (!data.succes) return afficherMessageModal("Erreur", data.message);
-    viderCacheFrontend();
-    afficherMessageModal("Date ajoutée", "La date a bien été ajoutée à la compétition.", () => afficherGestionDatesCompetition(idCompetition, nomCompetition));
-  });
+
+  demanderMotDePasseActionSensible(
+    "Confirmer l'ajout",
+    "Entre ton mot de passe officier pour ajouter cette date.",
+    function (motDePasse) {
+      appelAPISensible("ajouterDateCompetition", {
+        idCompetition,
+        dateCompetition: dateChoisie,
+        horaires,
+        utilisateur: utilisateurConnecte.joueur.pseudo,
+        motDePasse
+      }, function (data) {
+        if (!data.succes) return afficherMessageModal("Erreur", data.message);
+        viderCacheFrontend();
+        afficherMessageModal("Date ajoutée", "La date a bien été ajoutée à la compétition.", () => afficherGestionDatesCompetition(idCompetition, nomCompetition));
+      });
+    }
+  );
 }
 
 function confirmerSuppressionDate(idDate, idCompetition, nomCompetition) {
@@ -2683,11 +2713,21 @@ function confirmerSuppressionDate(idDate, idCompetition, nomCompetition) {
 }
 
 function supprimerDateDepuisSite(idDate, idCompetition, nomCompetition) {
-  appelAPI("supprimerDateCompetition", { idDate, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
-    if (!data.succes) return afficherMessageModal("Erreur", data.message);
-    viderCacheFrontend();
-    afficherMessageModal("Date supprimée", "La date a bien été supprimée.", () => afficherGestionDatesCompetition(idCompetition, nomCompetition));
-  });
+  demanderMotDePasseActionSensible(
+    "Confirmer la suppression",
+    "Entre ton mot de passe officier pour supprimer cette date.",
+    function (motDePasse) {
+      appelAPISensible("supprimerDateCompetition", {
+        idDate,
+        utilisateur: utilisateurConnecte.joueur.pseudo,
+        motDePasse
+      }, function (data) {
+        if (!data.succes) return afficherMessageModal("Erreur", data.message);
+        viderCacheFrontend();
+        afficherMessageModal("Date supprimée", "La date a bien été supprimée.", () => afficherGestionDatesCompetition(idCompetition, nomCompetition));
+      });
+    }
+  );
 }
 
 let joueursGestionCache = [];
@@ -4630,28 +4670,30 @@ function confirmerModificationCompetition(configJSON) {
     return;
   }
 
-  afficherChargement(
-    "Modification en cours...",
-    "La compétition est mise à jour."
-  );
+  demanderMotDePasseActionSensible(
+    "Confirmer les modifications",
+    "Entre ton mot de passe officier pour modifier cette compétition.",
+    function (motDePasse) {
+      appelAPISensible(
+        "modifierCompetitionComplete",
+        {
+          config: JSON.stringify(config),
+          utilisateur: utilisateurConnecte.joueur.pseudo,
+          motDePasse
+        },
+        function(data) {
+          if (!data.succes) {
+            return afficherMessageModal("Erreur", data.message);
+          }
 
-  appelAPI(
-    "modifierCompetitionComplete",
-    {
-      config: JSON.stringify(config),
-      utilisateur: utilisateurConnecte.joueur.pseudo
-    },
-    function(data) {
-      if (!data.succes) {
-        return afficherMessageModal("Erreur", data.message);
-      }
+          viderCacheFrontend();
 
-      viderCacheFrontend();
-
-      afficherMessageModal(
-        "Compétition modifiée",
-        "La compétition a bien été mise à jour.",
-        afficherGestionCompetitions
+          afficherMessageModal(
+            "Compétition modifiée",
+            "La compétition a bien été mise à jour.",
+            afficherGestionCompetitions
+          );
+        }
       );
     }
   );

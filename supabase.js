@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.12.5.4.2 - Migration complète Supabase
+   Version Alpha 0.12.6 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -527,13 +527,11 @@ function sbDetailsJournalLisibles(details) {
 }
 
 async function sbJournaliser(utilisateur, action, details) {
-  await supabaseClient
-    .from("journal_activite")
-    .insert([{
-      utilisateur: utilisateur || "Inconnu",
-      action: action || "",
-      details: details || ""
-    }]);
+  console.warn(
+    "Journalisation frontend désactivée : utiliser une RPC ou une Edge Function.",
+    { utilisateur, action, details }
+  );
+  return { succes: true };
 }
 
 /* ==========================================================
@@ -590,13 +588,15 @@ async function apiSupabase(action, parametres) {
     case "creerCompetitionComplete":
       return creerCompetitionCompleteSupabase(
         JSON.parse(parametres.config || "{}"),
-        parametres.utilisateur
+        parametres.utilisateur,
+        parametres.motDePasse
       );
 
     case "modifierCompetitionComplete":
       return modifierCompetitionCompleteSupabase(
         JSON.parse(parametres.config || "{}"),
-        parametres.utilisateur
+        parametres.utilisateur,
+        parametres.motDePasse
       );
 
     case "chargerJoueurs":
@@ -659,19 +659,22 @@ async function apiSupabase(action, parametres) {
         parametres.idCompetition,
         parametres.dateCompetition,
         parametres.utilisateur,
-        parametres.horaires
+        parametres.horaires,
+        parametres.motDePasse
       );
 
     case "supprimerDateCompetition":
       return supprimerDateCompetitionSupabase(
         parametres.idDate,
-        parametres.utilisateur
+        parametres.utilisateur,
+        parametres.motDePasse
       );
 
     case "supprimerCompetition":
       return supprimerCompetitionSupabase(
         parametres.idCompetition,
-        parametres.utilisateur
+        parametres.utilisateur,
+        parametres.motDePasse
       );
 
     case "chargerJournalActivite":
@@ -807,14 +810,24 @@ async function identifierUtilisateurSupabase(pseudo) {
     return sbErreur("Ce joueur n'est pas actif.");
   }
 
-  await supabaseClient
-    .from("joueurs")
-    .update({ derniere_connexion: new Date().toISOString() })
-    .eq("id", joueurBrut.id);
+  const { data: connexionRPC, error: erreurConnexionRPC } = await supabaseClient.rpc(
+    "enregistrer_connexion_joueur_site",
+    { p_pseudo: pseudoRecherche }
+  );
+
+  if (erreurConnexionRPC) {
+    console.warn("Erreur RPC enregistrer_connexion_joueur_site", erreurConnexionRPC);
+  }
+
+  const resultatConnexion = Array.isArray(connexionRPC)
+    ? connexionRPC[0]
+    : connexionRPC;
 
   const joueur = sbJoueurObj({
     ...joueurBrut,
-    derniere_connexion: new Date().toISOString()
+    derniere_connexion: resultatConnexion?.derniereConnexion ||
+      resultatConnexion?.derniere_connexion ||
+      new Date().toISOString()
   });
 
   const estOfficier = sbEstOfficierJoueur(joueur);
@@ -1105,238 +1118,70 @@ async function chargerCompetitionCompleteSupabase(idCompetition, pseudo) {
 }
 
 async function sauvegarderPresencesSupabase(idCompetition, pseudo, presences) {
-  const idComp = Number(idCompetition);
-  const pseudoOfficiel = sbTexte(pseudo);
-
-  const lignes = (presences || []).map(function (presence) {
-    return {
-      competition_id: idComp,
-      pseudo: pseudoOfficiel,
-      date_competition: sbFormatDateISO(presence.dateCompetition),
-      statut: presence.statut || "Non renseigné",
-      horaires_disponibles: presence.horairesDisponibles || "",
-      derniere_modification: new Date().toISOString()
-    };
-  });
-
-  const { data: existantes, error: erreurExistantes } = await supabaseClient
-    .from("presences")
-    .select("id,date_competition,statut,horaires_disponibles")
-    .eq("competition_id", idComp)
-    .ilike("pseudo", pseudoOfficiel);
-
-  if (erreurExistantes) return sbErreur(erreurExistantes.message);
-
-  const indexExistantes = {};
-
-  (existantes || []).forEach(function (presenceExistante) {
-    indexExistantes[sbFormatDateISO(presenceExistante.date_competition)] = presenceExistante;
-  });
-
-  let ajouts = 0;
-  let modifications = 0;
-  let suppressions = 0;
-  let horairesModifies = 0;
-  const detailsChangements = [];
-
-  lignes.forEach(function (ligne) {
-    const presenceExistante = indexExistantes[ligne.date_competition];
-    const ancienStatut = sbStatutPresenceLisible(presenceExistante?.statut);
-    const nouveauStatut = sbStatutPresenceLisible(ligne.statut);
-    const ancienRenseigne = sbPresenceEstRenseignee(ancienStatut);
-    const nouveauRenseigne = sbPresenceEstRenseignee(nouveauStatut);
-    const anciensHoraires = sbHorairesJournal(presenceExistante?.horaires_disponibles || "");
-    const nouveauxHoraires = sbHorairesJournal(ligne.horaires_disponibles || "");
-    const dateAffichage = sbDateAffichage(ligne.date_competition);
-
-    if (!ancienRenseigne && nouveauRenseigne) {
-      ajouts++;
-      detailsChangements.push(
-        "- " +
-          dateAffichage +
-          " : " +
-          ancienStatut +
-          " → " +
-          nouveauStatut +
-          " — " +
-          sbLibelleChangementPresence(ancienStatut, nouveauStatut)
-      );
-      return;
+  const { data, error } = await supabaseClient.rpc(
+    "sauvegarder_presences_site",
+    {
+      p_competition_id: Number(idCompetition),
+      p_pseudo: sbTexte(pseudo),
+      p_presences: presences || []
     }
+  );
 
-    if (ancienRenseigne && !nouveauRenseigne) {
-      suppressions++;
-      detailsChangements.push(
-        "- " +
-          dateAffichage +
-          " : " +
-          ancienStatut +
-          " → " +
-          nouveauStatut +
-          " — " +
-          sbLibelleChangementPresence(ancienStatut, nouveauStatut)
-      );
-      return;
-    }
+  if (error) {
+    console.warn("Erreur RPC sauvegarder_presences_site", error);
+    return sbErreur("Sauvegarde des présences impossible.");
+  }
 
-    if (ancienRenseigne && nouveauRenseigne && ancienStatut !== nouveauStatut) {
-      modifications++;
-      detailsChangements.push(
-        "- " +
-          dateAffichage +
-          " : " +
-          ancienStatut +
-          " → " +
-          nouveauStatut +
-          " — " +
-          sbLibelleChangementPresence(ancienStatut, nouveauStatut)
-      );
-      return;
-    }
+  const resultat = Array.isArray(data) ? data[0] : data;
+  const succesRPC = resultat?.succes === true || resultat?.success === true;
 
-    if (ancienRenseigne && nouveauRenseigne && anciensHoraires !== nouveauxHoraires) {
-      horairesModifies++;
-      detailsChangements.push(
-        "- " +
-          dateAffichage +
-          " : horaires modifiés — " +
-          (anciensHoraires || "Aucun horaire") +
-          " → " +
-          (nouveauxHoraires || "Aucun horaire")
-      );
-    }
-  });
-
-  const { error } = await supabaseClient
-    .from("presences")
-    .upsert(lignes, {
-      onConflict: "competition_id,pseudo,date_competition"
-    });
-
-  if (error) return sbErreur(error.message);
-
-  await supabaseClient
-    .from("joueurs")
-    .update({ derniere_modification: new Date().toISOString() })
-    .ilike("pseudo", pseudoOfficiel);
-
-  if (detailsChangements.length > 0) {
-    const nomCompetition = await sbNomCompetitionDepuisId(idComp);
-
-    await sbJournaliser(
-      pseudoOfficiel,
-      "Présences mises à jour",
-      "Compétition : " +
-        nomCompetition +
-        "\nJoueur : " +
-        pseudoOfficiel +
-        "\n\nAjouts : " +
-        ajouts +
-        "\nModifications : " +
-        modifications +
-        "\nSuppressions : " +
-        suppressions +
-        "\nHoraires modifiés : " +
-        horairesModifies +
-        "\n\nDétail :\n" +
-        detailsChangements.join("\n")
-    );
+  if (!resultat || !succesRPC) {
+    return sbErreur(resultat?.message || "Les présences n'ont pas pu être sauvegardées.");
   }
 
   return {
     succes: true,
-    message: "Présences sauvegardées.",
-    ajouts: ajouts,
-    modifications: modifications,
-    suppressions: suppressions,
-    horairesModifies: horairesModifies
+    message: resultat.message || "Présences sauvegardées.",
+    ajouts: Number(resultat.ajouts || 0),
+    modifications: Number(resultat.modifications || 0),
+    suppressions: Number(resultat.suppressions || 0),
+    horairesModifies: Number(resultat.horairesModifies || resultat.horaires_modifies || 0)
   };
 }
 
-async function creerCompetitionCompleteSupabase(config, utilisateur) {
-  if (
-    !sbEstSuperAdminPseudo(utilisateur) &&
-    !(await sbUtilisateurEstOfficier(utilisateur))
-  ) {
-    return sbErreur(
-      "Accès refusé : seul un officier peut créer une compétition."
-    );
+async function creerCompetitionCompleteSupabase(config, utilisateur, motDePasse) {
+  const motDePasseTexte = String(motDePasse || "");
+
+  if (!motDePasseTexte) {
+    return sbErreur("Mot de passe officier requis pour créer une compétition.");
   }
 
-  const rappelPresenceActive = !!config.rappelPresenceActive;
-  const heureRappelPresence = sbHeureRappelPresenceOuNull(
-    rappelPresenceActive,
-    config.heureRappelPresence
+  const { data, error } = await supabaseClient.rpc(
+    "creer_competition_complete_site",
+    {
+      p_utilisateur: sbTexte(utilisateur),
+      p_mot_de_passe: motDePasseTexte,
+      p_config: config || {}
+    }
   );
-
-  if (rappelPresenceActive && !heureRappelPresence) {
-    return sbErreur("Merci de renseigner une heure de rappel Discord des présences.");
-  }
-
-  const { data: competition, error } = await supabaseClient
-    .from("competitions")
-    .insert([{
-      nom: config.nom,
-      statut: config.statut || "Brouillon",
-      cree_par: utilisateur || "Inconnu",
-      roles_autorises: config.rolesAutorises || "",
-      description: config.description || "",
-
-      fermeture_auto_active: !!config.fermetureAutoActive,
-      heure_ouverture: config.heureOuvertureAuto || null,
-      heure_fermeture: config.heureFermetureAuto || null,
-
-      notification_presence_active: !!config.notificationPresenceActive,
-      heure_notification_presence: config.heureNotificationPresence || null,
-
-      rappel_presence_active: rappelPresenceActive,
-      heure_rappel_presence: heureRappelPresence
-    }])
-    .select()
-    .single();
 
   if (error) {
-    return sbErreur(error.message);
+    console.warn("Erreur RPC creer_competition_complete_site", error);
+    return sbErreur("Création de la compétition impossible.");
   }
 
-  const lignesDates = (config.dates || []).map(function(dateCompetition) {
-    return {
-      competition_id: competition.id,
-      date_competition: sbFormatDateISO(dateCompetition),
-      horaires: config.horaires || ""
-    };
-  });
+  const resultat = Array.isArray(data) ? data[0] : data;
+  const succesRPC = resultat?.succes === true || resultat?.success === true;
 
-  if (lignesDates.length > 0) {
-    const { error: erreurDates } = await supabaseClient
-      .from("dates_competition")
-      .insert(lignesDates);
-
-    if (erreurDates) {
-      return sbErreur(erreurDates.message);
-    }
+  if (!resultat || !succesRPC) {
+    return sbErreur(resultat?.message || "La compétition n'a pas pu être créée.");
   }
-
-  await sbJournaliser(
-    utilisateur,
-    "Compétition créée",
-    "Compétition : " +
-      config.nom +
-      "\nDates : " +
-      lignesDates.length +
-      "\nFermeture auto : " +
-      (config.fermetureAutoActive ? "Oui" : "Non") +
-      "\nNotification présences : " +
-      (config.notificationPresenceActive ? "Oui" : "Non") +
-      "\nRappel sans réponse : " +
-      (rappelPresenceActive ? "Oui à " + heureRappelPresence : "Non")
-  );
 
   return {
     succes: true,
-    message: "Compétition créée.",
-    idCompetition: competition.id,
-    nbDates: lignesDates.length
+    message: resultat.message || "Compétition créée.",
+    idCompetition: resultat.idCompetition || resultat.id_competition || null,
+    nbDates: Number(resultat.nbDates || resultat.nb_dates || 0)
   };
 }
 
@@ -1381,104 +1226,108 @@ async function modifierStatutCompetitionSupabase(idCompetition, nouveauStatut, u
   };
 }
 
-async function ajouterDateCompetitionSupabase(idCompetition, dateCompetition, utilisateur, horaires) {
-  if (!sbEstSuperAdminPseudo(utilisateur) && !(await sbUtilisateurEstOfficier(utilisateur))) {
-    return sbErreur("Accès refusé : seul un officier peut gérer les dates.");
+async function ajouterDateCompetitionSupabase(idCompetition, dateCompetition, utilisateur, horaires, motDePasse) {
+  const motDePasseTexte = String(motDePasse || "");
+
+  if (!motDePasseTexte) {
+    return sbErreur("Mot de passe officier requis pour ajouter une date.");
   }
 
-  const { data, error } = await supabaseClient
-    .from("dates_competition")
-    .insert([{
-      competition_id: Number(idCompetition),
-      date_competition: sbFormatDateISO(dateCompetition),
-      horaires: horaires || ""
-    }])
-    .select()
-    .single();
-
-  if (error) return sbErreur(error.message);
-
-  const nomCompetition = await sbNomCompetitionDepuisId(idCompetition);
-
-  await sbJournaliser(
-    utilisateur,
-    "Date ajoutée",
-    "Compétition : " + nomCompetition +
-      "\nDate : " + sbDateAffichage(sbFormatDateISO(dateCompetition))
+  const { data, error } = await supabaseClient.rpc(
+    "ajouter_date_competition_site",
+    {
+      p_utilisateur: sbTexte(utilisateur),
+      p_mot_de_passe: motDePasseTexte,
+      p_competition_id: Number(idCompetition),
+      p_date_competition: sbFormatDateISO(dateCompetition),
+      p_horaires: horaires || ""
+    }
   );
+
+  if (error) {
+    console.warn("Erreur RPC ajouter_date_competition_site", error);
+    return sbErreur("Ajout de la date impossible.");
+  }
+
+  const resultat = Array.isArray(data) ? data[0] : data;
+  const succesRPC = resultat?.succes === true || resultat?.success === true;
+
+  if (!resultat || !succesRPC) {
+    return sbErreur(resultat?.message || "La date n'a pas pu être ajoutée.");
+  }
 
   return {
     succes: true,
-    message: "Date ajoutée.",
-    idDate: data.id
+    message: resultat.message || "Date ajoutée.",
+    idDate: resultat.idDate || resultat.id_date || null
   };
 }
 
-async function supprimerDateCompetitionSupabase(idDate, utilisateur) {
-  if (!sbEstSuperAdminPseudo(utilisateur) && !(await sbUtilisateurEstOfficier(utilisateur))) {
-    return sbErreur("Accès refusé : seul un officier peut gérer les dates.");
+async function supprimerDateCompetitionSupabase(idDate, utilisateur, motDePasse) {
+  const motDePasseTexte = String(motDePasse || "");
+
+  if (!motDePasseTexte) {
+    return sbErreur("Mot de passe officier requis pour supprimer une date.");
   }
 
-  const { data: dates, error: erreurLectureDate } = await supabaseClient
-    .from("dates_competition")
-    .select("competition_id,date_competition")
-    .eq("id", Number(idDate))
-    .limit(1);
-
-  if (erreurLectureDate) return sbErreur(erreurLectureDate.message);
-
-  const dateSupprimee = dates && dates.length > 0 ? dates[0] : null;
-
-  const { error } = await supabaseClient
-    .from("dates_competition")
-    .delete()
-    .eq("id", Number(idDate));
-
-  if (error) return sbErreur(error.message);
-
-  const nomCompetition = dateSupprimee
-    ? await sbNomCompetitionDepuisId(dateSupprimee.competition_id)
-    : "Compétition inconnue";
-  const dateAffichage = dateSupprimee
-    ? sbDateAffichage(dateSupprimee.date_competition)
-    : "Date inconnue";
-
-  await sbJournaliser(
-    utilisateur,
-    "Date supprimée",
-    "Compétition : " + nomCompetition +
-      "\nDate : " + dateAffichage
+  const { data, error } = await supabaseClient.rpc(
+    "supprimer_date_competition_site",
+    {
+      p_utilisateur: sbTexte(utilisateur),
+      p_mot_de_passe: motDePasseTexte,
+      p_date_id: Number(idDate)
+    }
   );
+
+  if (error) {
+    console.warn("Erreur RPC supprimer_date_competition_site", error);
+    return sbErreur("Suppression de la date impossible.");
+  }
+
+  const resultat = Array.isArray(data) ? data[0] : data;
+  const succesRPC = resultat?.succes === true || resultat?.success === true;
+
+  if (!resultat || !succesRPC) {
+    return sbErreur(resultat?.message || "La date n'a pas pu être supprimée.");
+  }
 
   return {
     succes: true,
-    message: "Date supprimée."
+    message: resultat.message || "Date supprimée."
   };
 }
 
-async function supprimerCompetitionSupabase(idCompetition, utilisateur) {
-  if (!sbEstSuperAdminPseudo(utilisateur)) {
-    return sbErreur("Accès refusé : seul le Super Admin peut supprimer une compétition.");
+async function supprimerCompetitionSupabase(idCompetition, utilisateur, motDePasse) {
+  const motDePasseTexte = String(motDePasse || "");
+
+  if (!motDePasseTexte) {
+    return sbErreur("Mot de passe SuperAdmin requis pour supprimer une compétition.");
   }
 
-  const nomCompetition = await sbNomCompetitionDepuisId(idCompetition);
-
-  const { error } = await supabaseClient
-    .from("competitions")
-    .delete()
-    .eq("id", Number(idCompetition));
-
-  if (error) return sbErreur(error.message);
-
-  await sbJournaliser(
-    utilisateur,
-    "Compétition supprimée",
-    "Compétition : " + nomCompetition
+  const { data, error } = await supabaseClient.rpc(
+    "supprimer_competition_site",
+    {
+      p_utilisateur: sbTexte(utilisateur),
+      p_mot_de_passe: motDePasseTexte,
+      p_competition_id: Number(idCompetition)
+    }
   );
+
+  if (error) {
+    console.warn("Erreur RPC supprimer_competition_site", error);
+    return sbErreur("Suppression de la compétition impossible.");
+  }
+
+  const resultat = Array.isArray(data) ? data[0] : data;
+  const succesRPC = resultat?.succes === true || resultat?.success === true;
+
+  if (!resultat || !succesRPC) {
+    return sbErreur(resultat?.message || "La compétition n'a pas pu être supprimée.");
+  }
 
   return {
     succes: true,
-    message: "Compétition supprimée définitivement."
+    message: resultat.message || "Compétition supprimée définitivement."
   };
 }
 
@@ -2066,175 +1915,42 @@ async function changerMotDePasseSupabase(pseudo, ancienMdp, nouveauMdp) {
 }
 
 async function appliquerOuverturesFermeturesAutomatiquesSupabase() {
-  const maintenant = new Date();
-
-  const heureActuelle =
-    String(maintenant.getHours()).padStart(2, "0") +
-    ":" +
-    String(maintenant.getMinutes()).padStart(2, "0");
-
-  const dateAujourdHui =
-    maintenant.getFullYear() +
-    "-" +
-    String(maintenant.getMonth() + 1).padStart(2, "0") +
-    "-" +
-    String(maintenant.getDate()).padStart(2, "0");
-
-  const { data: competitions, error } = await supabaseClient
-    .from("competitions")
-    .select(`
-      *,
-      dates_competition (
-        date_competition
-      )
-    `)
-    .eq("fermeture_auto_active", true);
-
-  if (error) {
-    return sbErreur(error.message);
-  }
-
-  for (const competition of competitions || []) {
-    const dates = competition.dates_competition || [];
-
-    if (dates.length === 0) {
-      continue;
-    }
-
-    const datesISO = dates
-      .map(function (date) {
-        return sbFormatDateISO(date.date_competition);
-      })
-      .sort();
-
-    const premiereDate = datesISO[0];
-    const derniereDate = datesISO[datesISO.length - 1];
-
-    if (dateAujourdHui < premiereDate || dateAujourdHui > derniereDate) {
-      continue;
-    }
-
-    const heureOuverture = competition.heure_ouverture;
-    const heureFermeture = competition.heure_fermeture;
-
-    if (!heureOuverture || !heureFermeture) {
-      continue;
-    }
-
-    const statutActuel = sbNormaliserStatut(competition.statut);
-
-    let nouveauStatut = competition.statut;
-
-    if (heureOuverture < heureFermeture) {
-      if (heureActuelle >= heureOuverture && heureActuelle < heureFermeture) {
-        nouveauStatut = "Ouverte";
-      } else {
-        nouveauStatut = "Fermée";
-      }
-    } else {
-      if (heureActuelle >= heureOuverture || heureActuelle < heureFermeture) {
-        nouveauStatut = "Ouverte";
-      } else {
-        nouveauStatut = "Fermée";
-      }
-    }
-
-    if (sbNormaliserStatut(nouveauStatut) === statutActuel) {
-      continue;
-    }
-
-    await supabaseClient
-      .from("competitions")
-      .update({
-        statut: nouveauStatut,
-        dernier_traitement_auto: dateAujourdHui
-      })
-      .eq("id", competition.id);
-
-    await sbJournaliser(
-      "Système automatique",
-      "Statut modifié automatiquement",
-      "Compétition : " + (competition.nom || "Compétition inconnue") +
-        "\nNouveau statut : " + nouveauStatut
-    );
-  }
-
   return {
     succes: true,
-    message: "Ouvertures/fermetures automatiques vérifiées."
+    message: "Ouvertures/fermetures automatiques gérées côté serveur."
   };
 }
 
-async function modifierCompetitionCompleteSupabase(config, utilisateur) {
-  if (
-    !sbEstSuperAdminPseudo(utilisateur) &&
-    !(await sbUtilisateurEstOfficier(utilisateur))
-  ) {
-    return sbErreur(
-      "Accès refusé : seul un officier peut modifier une compétition."
-    );
+async function modifierCompetitionCompleteSupabase(config, utilisateur, motDePasse) {
+  const motDePasseTexte = String(motDePasse || "");
+
+  if (!motDePasseTexte) {
+    return sbErreur("Mot de passe officier requis pour modifier une compétition.");
   }
 
-  if (
-    sbNormaliserStatut(config.statut) === "archivee" &&
-    !sbEstSuperAdminPseudo(utilisateur)
-  ) {
-    return sbErreur(
-      "Accès refusé : seul le Super Admin peut archiver une compétition."
-    );
-  }
-
-  const rappelPresenceActive = !!config.rappelPresenceActive;
-  const heureRappelPresence = sbHeureRappelPresenceOuNull(
-    rappelPresenceActive,
-    config.heureRappelPresence
+  const { data, error } = await supabaseClient.rpc(
+    "modifier_competition_complete_site",
+    {
+      p_utilisateur: sbTexte(utilisateur),
+      p_mot_de_passe: motDePasseTexte,
+      p_config: config || {}
+    }
   );
-
-  if (rappelPresenceActive && !heureRappelPresence) {
-    return sbErreur("Merci de renseigner une heure de rappel Discord des présences.");
-  }
-
-  const { error } = await supabaseClient
-    .from("competitions")
-    .update({
-      nom: config.nom,
-      statut: config.statut || "Brouillon",
-      roles_autorises: config.rolesAutorises || "",
-      description: config.description || "",
-
-      fermeture_auto_active: !!config.fermetureAutoActive,
-      heure_ouverture: config.heureOuvertureAuto || null,
-      heure_fermeture: config.heureFermetureAuto || null,
-
-      notification_presence_active: !!config.notificationPresenceActive,
-      heure_notification_presence: config.heureNotificationPresence || null,
-
-      rappel_presence_active: rappelPresenceActive,
-      heure_rappel_presence: heureRappelPresence
-    })
-    .eq("id", Number(config.idCompetition));
 
   if (error) {
-    return sbErreur(error.message);
+    console.warn("Erreur RPC modifier_competition_complete_site", error);
+    return sbErreur("Modification de la compétition impossible.");
   }
 
-  await sbJournaliser(
-    utilisateur,
-    "Compétition modifiée",
-    "Compétition : " +
-      config.nom +
-      "\nStatut : " +
-      config.statut +
-      "\nFermeture auto : " +
-      (config.fermetureAutoActive ? "Oui" : "Non") +
-      "\nNotification présences : " +
-      (config.notificationPresenceActive ? "Oui" : "Non") +
-      "\nRappel sans réponse : " +
-      (rappelPresenceActive ? "Oui à " + heureRappelPresence : "Non")
-  );
+  const resultat = Array.isArray(data) ? data[0] : data;
+  const succesRPC = resultat?.succes === true || resultat?.success === true;
+
+  if (!resultat || !succesRPC) {
+    return sbErreur(resultat?.message || "La compétition n'a pas pu être modifiée.");
+  }
 
   return {
     succes: true,
-    message: "Compétition modifiée."
+    message: resultat.message || "Compétition modifiée."
   };
 }
