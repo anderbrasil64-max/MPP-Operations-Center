@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.12.5.3 - Migration complète Supabase
+   Version Alpha 0.12.5.4.2 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -608,7 +608,8 @@ async function apiSupabase(action, parametres) {
         parametres.roles,
         parametres.statut,
         parametres.utilisateur,
-        parametres.discordId
+        parametres.discordId,
+        parametres.motDePasse
       );
 
     case "modifierJoueur":
@@ -618,7 +619,8 @@ async function apiSupabase(action, parametres) {
         parametres.roles,
         parametres.statut,
         parametres.utilisateur,
-        parametres.discordId
+        parametres.discordId,
+        parametres.motDePasse
       );
 
     case "genererCodeLiaisonDiscord":
@@ -841,74 +843,46 @@ async function chargerJoueursSupabase() {
   };
 }
 
-async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur, discordId) {
+async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur, discordId, motDePasse) {
+  const motDePasseTexte = String(motDePasse || "");
+  const discordIdNettoye = sbDiscordId(discordId);
 
-  const utilisateurSuperAdmin = await sbUtilisateurEstSuperAdmin(utilisateur);
-
-  if (
-    !utilisateurSuperAdmin &&
-    !(await sbUtilisateurEstOfficier(utilisateur))
-  ) {
-    return sbErreur(
-      "Accès refusé : seul un officier peut ajouter un joueur."
-    );
+  if (!motDePasseTexte) {
+    return sbErreur("Mot de passe officier requis pour ajouter un joueur.");
   }
-
-  const rolesDemandes = sbTexte(roles);
-
-  if (
-    rolesDemandes.toLowerCase().includes("superadmin") &&
-    !utilisateurSuperAdmin
-  ) {
-    return sbErreur(
-      "Accès refusé : seul un Super Admin peut attribuer le rôle SuperAdmin."
-    );
-  }
-
-  const discordIdNettoye = utilisateurSuperAdmin ? sbDiscordId(discordId) : "";
 
   if (discordIdNettoye === null) {
     return sbErreur("L’ID Discord doit contenir uniquement des chiffres.");
   }
 
-  const donneesJoueur = {
-    pseudo: sbTexte(pseudo),
-    roles: rolesDemandes || "Soldat",
-    statut: sbTexte(statut) || "Actif"
-  };
-
-  if (utilisateurSuperAdmin) {
-    donneesJoueur.discord_id = discordIdNettoye || null;
-  }
-
-  const { data, error } = await supabaseClient
-    .from("joueurs")
-    .insert([donneesJoueur])
-    .select()
-    .single();
-
-  if (error) return sbErreur(error.message);
-
-  const detailsAjout = [
-    "Joueur : " + sbTexte(pseudo),
-    "Rôles : " + (rolesDemandes || "Soldat"),
-    "Statut : " + (sbTexte(statut) || "Actif")
-  ];
-
-  if (discordIdNettoye) {
-    detailsAjout.push("ID Discord : ajouté");
-  }
-
-  await sbJournaliser(
-    utilisateur,
-    "Joueur ajouté",
-    detailsAjout.join("\n")
+  const { data, error } = await supabaseClient.rpc(
+    "ajouter_joueur_site",
+    {
+      p_utilisateur: sbTexte(utilisateur),
+      p_mot_de_passe: motDePasseTexte,
+      p_pseudo: sbTexte(pseudo),
+      p_roles: sbTexte(roles) || "Soldat",
+      p_statut: sbTexte(statut) || "Actif",
+      p_discord_id: discordIdNettoye || null
+    }
   );
+
+  if (error) {
+    console.warn("Erreur RPC ajouter_joueur_site", error);
+    return sbErreur("Ajout du joueur impossible.");
+  }
+
+  const resultat = Array.isArray(data) ? data[0] : data;
+  const succesRPC = resultat?.succes === true || resultat?.success === true;
+
+  if (!resultat || !succesRPC) {
+    return sbErreur(resultat?.message || "Le joueur n'a pas pu être ajouté.");
+  }
 
   return {
     succes: true,
-    message: "Joueur ajouté.",
-    idJoueur: data.id
+    message: resultat.message || "Joueur ajouté.",
+    idJoueur: resultat.idJoueur || resultat.id_joueur || resultat.id || null
   };
 }
 
@@ -918,109 +892,48 @@ async function modifierJoueurSupabase(
   roles,
   statut,
   utilisateur,
-  discordId
+  discordId,
+  motDePasse
 ) {
+  const motDePasseTexte = String(motDePasse || "");
+  const nouveauDiscordId = sbDiscordId(discordId);
 
-  const utilisateurSuperAdmin = await sbUtilisateurEstSuperAdmin(utilisateur);
-
-  if (
-    !utilisateurSuperAdmin &&
-    !(await sbUtilisateurEstOfficier(utilisateur))
-  ) {
-    return sbErreur(
-      "Accès refusé : seul un officier peut modifier un joueur."
-    );
+  if (!motDePasseTexte) {
+    return sbErreur("Mot de passe officier requis pour modifier un joueur.");
   }
-
-  const rolesDemandes = sbTexte(roles);
-
-  if (
-    rolesDemandes.toLowerCase().includes("superadmin") &&
-    !utilisateurSuperAdmin
-  ) {
-    return sbErreur(
-      "Accès refusé : seul un Super Admin peut attribuer le rôle SuperAdmin."
-    );
-  }
-
-  const { data: joueursExistants, error: erreurJoueurExistant } = await supabaseClient
-    .from("joueurs")
-    .select("id,pseudo,roles,statut,discord_id")
-    .eq("id", Number(idJoueur))
-    .limit(1);
-
-  if (erreurJoueurExistant) return sbErreur(erreurJoueurExistant.message);
-
-  if (!joueursExistants || joueursExistants.length === 0) {
-    return sbErreur("Joueur introuvable.");
-  }
-
-  const joueurExistant = joueursExistants[0];
-  const nouveauPseudo = sbTexte(pseudo);
-  const nouveauStatut = sbTexte(statut);
-  const nouveauDiscordId = utilisateurSuperAdmin ? sbDiscordId(discordId) : "";
 
   if (nouveauDiscordId === null) {
     return sbErreur("L’ID Discord doit contenir uniquement des chiffres.");
   }
 
-  const donneesModification = {
-    pseudo: nouveauPseudo,
-    roles: rolesDemandes,
-    statut: nouveauStatut,
-    derniere_modification: new Date().toISOString()
-  };
-
-  if (utilisateurSuperAdmin) {
-    donneesModification.discord_id = nouveauDiscordId || null;
-  }
-
-  const { error } = await supabaseClient
-    .from("joueurs")
-    .update(donneesModification)
-    .eq("id", Number(idJoueur));
-
-  if (error) return sbErreur(error.message);
-
-  const changements = [];
-
-  if (sbTexte(joueurExistant.pseudo) !== nouveauPseudo) {
-    changements.push("Pseudo : " + sbTexte(joueurExistant.pseudo) + " → " + nouveauPseudo);
-  }
-
-  if (sbTexte(joueurExistant.roles) !== rolesDemandes) {
-    changements.push("Rôles : " + (sbTexte(joueurExistant.roles) || "-") + " → " + (rolesDemandes || "-"));
-  }
-
-  if (sbTexte(joueurExistant.statut) !== nouveauStatut) {
-    changements.push("Statut : " + (sbTexte(joueurExistant.statut) || "-") + " → " + (nouveauStatut || "-"));
-  }
-
-  if (utilisateurSuperAdmin && sbTexte(joueurExistant.discord_id) !== nouveauDiscordId) {
-    const ancienDiscordId = sbTexte(joueurExistant.discord_id);
-
-    if (!ancienDiscordId && nouveauDiscordId) {
-      changements.push("ID Discord : ajouté");
-    } else if (ancienDiscordId && !nouveauDiscordId) {
-      changements.push("ID Discord : supprimé");
-    } else {
-      changements.push("ID Discord : modifié");
+  const { data, error } = await supabaseClient.rpc(
+    "modifier_joueur_site",
+    {
+      p_utilisateur: sbTexte(utilisateur),
+      p_mot_de_passe: motDePasseTexte,
+      p_id_joueur: Number(idJoueur),
+      p_pseudo: sbTexte(pseudo),
+      p_roles: sbTexte(roles),
+      p_statut: sbTexte(statut),
+      p_discord_id: nouveauDiscordId || null
     }
+  );
+
+  if (error) {
+    console.warn("Erreur RPC modifier_joueur_site", error);
+    return sbErreur("Modification du joueur impossible.");
   }
 
-  if (changements.length > 0) {
-    await sbJournaliser(
-      utilisateur,
-      "Joueur modifié",
-      "Joueur : " + (sbTexte(joueurExistant.pseudo) || nouveauPseudo) +
-        "\n" +
-        changements.join("\n")
-    );
+  const resultat = Array.isArray(data) ? data[0] : data;
+  const succesRPC = resultat?.succes === true || resultat?.success === true;
+
+  if (!resultat || !succesRPC) {
+    return sbErreur(resultat?.message || "Le joueur n'a pas pu être modifié.");
   }
 
   return {
     succes: true,
-    message: "Joueur modifié."
+    message: resultat.message || "Joueur modifié."
   };
 }
 

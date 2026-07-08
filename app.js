@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.12.5.3 - Supabase
+   Version Alpha 0.12.5.4.2 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.12.5.3 - Supabase";
+const VERSION_SITE = "Alpha 0.12.5.4.2 - Supabase";
 const CLE_PSEUDO_SAUVEGARDE = "mpp_saved_pseudo";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
@@ -2128,6 +2128,60 @@ function demanderMotDePasseChangementStatut(idCompetition, nouveauStatut) {
   champMotDePasse.focus();
 }
 
+function demanderMotDePasseActionSensible(titre, message, actionConfirmer) {
+  fermerModal();
+
+  const modal = document.createElement("div");
+  modal.id = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal-box">
+      <h2>${escapeHTML(titre)}</h2>
+      <div class="modal-message">
+        <p>${escapeHTML(message)}</p>
+      </div>
+      <label for="motDePasseActionSensible" class="modal-confirm-label">
+        Mot de passe officier
+      </label>
+      <input
+        type="password"
+        id="motDePasseActionSensible"
+        class="modal-confirm-input"
+        autocomplete="current-password"
+      >
+      <div class="modal-actions">
+        <button class="secondary-button" id="annulerActionSensible">Annuler</button>
+        <button id="confirmerActionSensible">Confirmer</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const champMotDePasse = document.getElementById("motDePasseActionSensible");
+
+  function validerActionSensible() {
+    const motDePasse = champMotDePasse ? champMotDePasse.value : "";
+
+    if (!motDePasse) {
+      return afficherMessageModal("Mot de passe requis", "Merci de saisir le mot de passe officier.");
+    }
+
+    fermerModal();
+    actionConfirmer(motDePasse);
+  }
+
+  document.getElementById("annulerActionSensible").onclick = fermerModal;
+  document.getElementById("confirmerActionSensible").onclick = validerActionSensible;
+
+  champMotDePasse.onkeydown = function (event) {
+    if (event.key === "Enter") {
+      validerActionSensible();
+    }
+  };
+
+  champMotDePasse.focus();
+}
+
 function executerChangementStatutCompetition(idCompetition, nouveauStatut, motDePasse) {
   afficherChargement("Modification du statut", "Validation sécurisée en cours...");
 
@@ -2820,11 +2874,28 @@ function ajouterJoueurDepuisSite() {
   if (discordId === null) return;
   if (!pseudo) return afficherMessageModal("Erreur", "Merci de saisir un pseudo.");
   if (roles.length === 0) return afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle.");
-  appelAPI("ajouterJoueur", { pseudo, roles: roles.join(","), statut, discordId, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
-    if (!data.succes) return afficherMessageModal("Erreur", data.message);
-    viderCacheFrontend();
-    afficherMessageModal("Joueur ajouté", "Le joueur a bien été ajouté.", afficherGestionJoueurs);
-  });
+
+  demanderMotDePasseActionSensible(
+    "Confirmer l'ajout",
+    "Entre ton mot de passe officier pour créer ce joueur.",
+    function (motDePasse) {
+      appelAPISensible("ajouterJoueur", {
+        pseudo,
+        roles: roles.join(","),
+        statut,
+        discordId,
+        utilisateur: utilisateurConnecte.joueur.pseudo,
+        motDePasse
+      }, function (data) {
+        if (!data.succes) {
+          return afficherMessageModal("Erreur", escapeHTML(data.message || "Le joueur n'a pas pu être ajouté."));
+        }
+
+        viderCacheFrontend();
+        afficherMessageModal("Joueur ajouté", escapeHTML(data.message || "Le joueur a bien été ajouté."), afficherGestionJoueurs);
+      });
+    }
+  );
 }
 
 function afficherFormulaireModificationJoueur(joueur) {
@@ -2955,11 +3026,29 @@ function modifierJoueurDepuisSite(idJoueur) {
   if (discordId === null) return;
   if (!pseudo) return afficherMessageModal("Erreur", "Merci de saisir un pseudo.");
   if (roles.length === 0) return afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle.");
-  appelAPI("modifierJoueur", { idJoueur, pseudo, roles: roles.join(","), statut, discordId, utilisateur: utilisateurConnecte.joueur.pseudo }, function (data) {
-    if (!data.succes) return afficherMessageModal("Erreur", data.message);
-    viderCacheFrontend();
-    afficherMessageModal("Joueur modifié", "Les informations du joueur ont bien été mises à jour.", afficherGestionJoueurs);
-  });
+
+  demanderMotDePasseActionSensible(
+    "Confirmer la modification",
+    "Entre ton mot de passe officier pour modifier ce joueur.",
+    function (motDePasse) {
+      appelAPISensible("modifierJoueur", {
+        idJoueur,
+        pseudo,
+        roles: roles.join(","),
+        statut,
+        discordId,
+        utilisateur: utilisateurConnecte.joueur.pseudo,
+        motDePasse
+      }, function (data) {
+        if (!data.succes) {
+          return afficherMessageModal("Erreur", escapeHTML(data.message || "Le joueur n'a pas pu être modifié."));
+        }
+
+        viderCacheFrontend();
+        afficherMessageModal("Joueur modifié", escapeHTML(data.message || "Les informations du joueur ont bien été mises à jour."), afficherGestionJoueurs);
+      });
+    }
+  );
 }
 
 function confirmerSuppressionJoueur(idJoueur) {
