@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.12.6 - Migration complète Supabase
+   Version Alpha 0.12.8 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -794,7 +794,7 @@ async function identifierUtilisateurSupabase(pseudo) {
 
   const { data, error } = await supabaseClient
     .from("joueurs")
-    .select("id,pseudo,roles,statut,discord_id,discord_username,discord_lie_a,date_ajout,derniere_connexion,derniere_modification")
+    .select("id,pseudo,roles,statut,discord_id,discord_username,discord_lie_a")
     .ilike("pseudo", pseudoRecherche)
     .limit(1);
 
@@ -845,7 +845,7 @@ async function identifierUtilisateurSupabase(pseudo) {
 async function chargerJoueursSupabase() {
   const { data, error } = await supabaseClient
     .from("joueurs")
-    .select("id,pseudo,roles,statut,discord_id,discord_username,discord_lie_a,date_ajout,derniere_connexion,derniere_modification")
+    .select("id,pseudo,roles,statut,discord_id,discord_username,discord_lie_a,derniere_connexion")
     .order("pseudo", { ascending: true });
 
   if (error) return sbErreur(error.message);
