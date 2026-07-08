@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.12.6 - Supabase
+   Version Alpha 0.12.7.1 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.12.6 - Supabase";
+const VERSION_SITE = "Alpha 0.12.7.1 - Supabase";
 const CLE_PSEUDO_SAUVEGARDE = "mpp_saved_pseudo";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
@@ -80,6 +80,25 @@ function escapeHTML(valeur) {
 
 function jsString(valeur) {
   return String(valeur ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function champUsernameAutocomplete(id) {
+  const pseudo = utilisateurConnecte?.joueur?.pseudo || "";
+  if (!pseudo) return "";
+
+  return `
+    <input
+      type="text"
+      id="${escapeHTML(id)}"
+      name="username"
+      value="${escapeHTML(pseudo)}"
+      autocomplete="username"
+      readonly
+      tabindex="-1"
+      aria-hidden="true"
+      style="position:absolute;left:-10000px;width:1px;height:1px;opacity:0;pointer-events:none;"
+    >
+  `;
 }
 
 function normaliserValeurComparaison(valeur) {
@@ -477,7 +496,7 @@ function afficherConnexion() {
   setContenu(`
     <div class="form-zone">
       <label for="pseudo">Pseudo World of Tanks</label>
-      <input type="text" id="pseudo" value="${escapeHTML(pseudoSauvegarde)}" placeholder="Ex : Raiju153" onkeydown="if(event.key==='Enter'){connexion();}">
+      <input type="text" id="pseudo" name="username" autocomplete="username" value="${escapeHTML(pseudoSauvegarde)}" placeholder="Ex : Raiju153" onkeydown="if(event.key==='Enter'){connexion();}">
       <label class="remember-login-label" for="memoriserPseudo">
         <input type="checkbox" id="memoriserPseudo"${memoriserCoche}>
         <span>Se souvenir de mon pseudo</span>
@@ -2095,9 +2114,11 @@ function demanderMotDePasseChangementStatut(idCompetition, nouveauStatut) {
       <label for="motDePasseStatutCompetition" class="modal-confirm-label">
         Mot de passe officier
       </label>
+      ${champUsernameAutocomplete("usernameStatutCompetition")}
       <input
         type="password"
         id="motDePasseStatutCompetition"
+        name="password"
         class="modal-confirm-input"
         autocomplete="current-password"
       >
@@ -2149,9 +2170,11 @@ function demanderMotDePasseActionSensible(titre, message, actionConfirmer) {
       <label for="motDePasseActionSensible" class="modal-confirm-label">
         Mot de passe officier
       </label>
+      ${champUsernameAutocomplete("usernameActionSensible")}
       <input
         type="password"
         id="motDePasseActionSensible"
+        name="password"
         class="modal-confirm-input"
         autocomplete="current-password"
       >
@@ -3390,9 +3413,12 @@ function afficherDemandesLiaisonDiscord() {
         <p>Entre le mot de passe administrateur pour charger les demandes en attente.</p>
 
         <label for="motDePasseDemandesDiscord">Mot de passe administrateur</label>
+        ${champUsernameAutocomplete("usernameDemandesDiscord")}
         <input
           type="password"
           id="motDePasseDemandesDiscord"
+          name="password"
+          autocomplete="current-password"
           onkeydown="if(event.key==='Enter'){chargerDemandesLiaisonDiscordDepuisSite();}"
         >
 
@@ -4150,6 +4176,8 @@ function afficherDemandeMotDePasseOfficier() {
 
       <p>Connecté : ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</p>
 
+      ${champUsernameAutocomplete("usernameAccesOfficier")}
+
       <label for="mdpOfficier">
         ${estSuperAdmin ? "Mot de passe Super Admin" : "Mot de passe Officier"}
       </label>
@@ -4157,6 +4185,8 @@ function afficherDemandeMotDePasseOfficier() {
       <input
         type="password"
         id="mdpOfficier"
+        name="password"
+        autocomplete="current-password"
         placeholder="${estSuperAdmin ? "Mot de passe Super Admin" : "Mot de passe Officier"}"
         onkeydown="if(event.key==='Enter'){verifierAccesOfficier();}"
       >
@@ -4179,19 +4209,30 @@ function afficherChangerMotDePasse() {
 
       <h2>Changer mon mot de passe</h2>
 
+      ${champUsernameAutocomplete("usernameChangementMotDePasse")}
+
+      <label for="ancienMdp">Mot de passe actuel</label>
       <input
         type="password"
         id="ancienMdp"
+        name="current-password"
+        autocomplete="current-password"
         placeholder="Mot de passe actuel">
 
+      <label for="nouveauMdp">Nouveau mot de passe</label>
       <input
         type="password"
         id="nouveauMdp"
+        name="new-password"
+        autocomplete="new-password"
         placeholder="Nouveau mot de passe">
 
+      <label for="confirmationMdp">Confirmation</label>
       <input
         type="password"
         id="confirmationMdp"
+        name="confirm-new-password"
+        autocomplete="new-password"
         placeholder="Confirmation">
 
       <button onclick="changerMotDePasse()">
