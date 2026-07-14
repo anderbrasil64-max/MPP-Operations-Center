@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.12.8 - Migration complète Supabase
+   Version Alpha 0.12.8.1 - Migration complète Supabase
    ========================================================== */
 
 /*
@@ -527,10 +527,7 @@ function sbDetailsJournalLisibles(details) {
 }
 
 async function sbJournaliser(utilisateur, action, details) {
-  console.warn(
-    "Journalisation frontend désactivée : utiliser une RPC ou une Edge Function.",
-    { utilisateur, action, details }
-  );
+  console.warn("Journalisation frontend désactivée : utiliser une RPC ou une Edge Function.");
   return { succes: true };
 }
 
@@ -816,7 +813,7 @@ async function identifierUtilisateurSupabase(pseudo) {
   );
 
   if (erreurConnexionRPC) {
-    console.warn("Erreur RPC enregistrer_connexion_joueur_site", erreurConnexionRPC);
+    console.warn("RPC enregistrer_connexion_joueur_site : échec non bloquant.");
   }
 
   const resultatConnexion = Array.isArray(connexionRPC)
@@ -881,7 +878,7 @@ async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur, discord
   );
 
   if (error) {
-    console.warn("Erreur RPC ajouter_joueur_site", error);
+    console.warn("RPC ajouter_joueur_site : échec.");
     return sbErreur("Ajout du joueur impossible.");
   }
 
@@ -933,7 +930,7 @@ async function modifierJoueurSupabase(
   );
 
   if (error) {
-    console.warn("Erreur RPC modifier_joueur_site", error);
+    console.warn("RPC modifier_joueur_site : échec.");
     return sbErreur("Modification du joueur impossible.");
   }
 
@@ -1128,7 +1125,7 @@ async function sauvegarderPresencesSupabase(idCompetition, pseudo, presences) {
   );
 
   if (error) {
-    console.warn("Erreur RPC sauvegarder_presences_site", error);
+    console.warn("RPC sauvegarder_presences_site : échec.");
     return sbErreur("Sauvegarde des présences impossible.");
   }
 
@@ -1166,7 +1163,7 @@ async function creerCompetitionCompleteSupabase(config, utilisateur, motDePasse)
   );
 
   if (error) {
-    console.warn("Erreur RPC creer_competition_complete_site", error);
+    console.warn("RPC creer_competition_complete_site : échec.");
     return sbErreur("Création de la compétition impossible.");
   }
 
@@ -1203,7 +1200,7 @@ async function modifierStatutCompetitionSupabase(idCompetition, nouveauStatut, u
   );
 
   if (error) {
-    console.warn("Erreur RPC modifier_statut_competition_site", error);
+    console.warn("RPC modifier_statut_competition_site : échec.");
     return sbErreur("Modification du statut impossible.");
   }
 
@@ -1245,7 +1242,7 @@ async function ajouterDateCompetitionSupabase(idCompetition, dateCompetition, ut
   );
 
   if (error) {
-    console.warn("Erreur RPC ajouter_date_competition_site", error);
+    console.warn("RPC ajouter_date_competition_site : échec.");
     return sbErreur("Ajout de la date impossible.");
   }
 
@@ -1280,7 +1277,7 @@ async function supprimerDateCompetitionSupabase(idDate, utilisateur, motDePasse)
   );
 
   if (error) {
-    console.warn("Erreur RPC supprimer_date_competition_site", error);
+    console.warn("RPC supprimer_date_competition_site : échec.");
     return sbErreur("Suppression de la date impossible.");
   }
 
@@ -1314,7 +1311,7 @@ async function supprimerCompetitionSupabase(idCompetition, utilisateur, motDePas
   );
 
   if (error) {
-    console.warn("Erreur RPC supprimer_competition_site", error);
+    console.warn("RPC supprimer_competition_site : échec.");
     return sbErreur("Suppression de la compétition impossible.");
   }
 
@@ -1938,7 +1935,7 @@ async function modifierCompetitionCompleteSupabase(config, utilisateur, motDePas
   );
 
   if (error) {
-    console.warn("Erreur RPC modifier_competition_complete_site", error);
+    console.warn("RPC modifier_competition_complete_site : échec.");
     return sbErreur("Modification de la compétition impossible.");
   }
 

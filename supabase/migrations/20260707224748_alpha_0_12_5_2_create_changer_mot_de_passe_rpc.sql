@@ -69,9 +69,9 @@ begin
 
   if nullif(v_mot_de_passe_attendu, '') is null then
     if v_est_superadmin then
-      v_mot_de_passe_attendu := 'superAD';
+      v_mot_de_passe_attendu := null;
     elsif v_est_officier then
-      v_mot_de_passe_attendu := 'offMPP';
+      v_mot_de_passe_attendu := null;
     end if;
   end if;
 

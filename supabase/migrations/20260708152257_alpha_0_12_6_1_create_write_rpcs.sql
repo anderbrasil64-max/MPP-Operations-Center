@@ -325,9 +325,9 @@ begin
   v_mot_de_passe_attendu := v_demandeur.mot_de_passe;
   if nullif(v_mot_de_passe_attendu, '') is null then
     if v_superadmin then
-      v_mot_de_passe_attendu := 'superAD';
+      v_mot_de_passe_attendu := null;
     elsif v_officier then
-      v_mot_de_passe_attendu := 'offMPP';
+      v_mot_de_passe_attendu := null;
     end if;
   end if;
 
@@ -510,9 +510,9 @@ begin
   v_mot_de_passe_attendu := v_demandeur.mot_de_passe;
   if nullif(v_mot_de_passe_attendu, '') is null then
     if v_superadmin then
-      v_mot_de_passe_attendu := 'superAD';
+      v_mot_de_passe_attendu := null;
     elsif v_officier then
-      v_mot_de_passe_attendu := 'offMPP';
+      v_mot_de_passe_attendu := null;
     end if;
   end if;
 
@@ -652,9 +652,9 @@ begin
   v_mot_de_passe_attendu := v_demandeur.mot_de_passe;
   if nullif(v_mot_de_passe_attendu, '') is null then
     if v_superadmin then
-      v_mot_de_passe_attendu := 'superAD';
+      v_mot_de_passe_attendu := null;
     elsif v_officier then
-      v_mot_de_passe_attendu := 'offMPP';
+      v_mot_de_passe_attendu := null;
     end if;
   end if;
 
@@ -754,9 +754,9 @@ begin
   v_mot_de_passe_attendu := v_demandeur.mot_de_passe;
   if nullif(v_mot_de_passe_attendu, '') is null then
     if v_superadmin then
-      v_mot_de_passe_attendu := 'superAD';
+      v_mot_de_passe_attendu := null;
     elsif v_officier then
-      v_mot_de_passe_attendu := 'offMPP';
+      v_mot_de_passe_attendu := null;
     end if;
   end if;
 
@@ -836,7 +836,7 @@ begin
 
   v_mot_de_passe_attendu := v_demandeur.mot_de_passe;
   if nullif(v_mot_de_passe_attendu, '') is null then
-    v_mot_de_passe_attendu := 'superAD';
+    v_mot_de_passe_attendu := null;
   end if;
 
   if coalesce(p_mot_de_passe, '') <> coalesce(v_mot_de_passe_attendu, '') then

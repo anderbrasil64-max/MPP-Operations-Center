@@ -1,10 +1,10 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Frontend JavaScript optimisé
-   Version Alpha 0.12.8 - Supabase
+   Version Alpha 0.12.8.1 - Supabase
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.12.8 - Supabase";
+const VERSION_SITE = "Alpha 0.12.8.1 - Supabase";
 const CLE_PSEUDO_SAUVEGARDE = "mpp_saved_pseudo";
 let utilisateurConnecte = null;
 let accesOfficierValide = false;
@@ -79,7 +79,20 @@ function escapeHTML(valeur) {
 }
 
 function jsString(valeur) {
-  return String(valeur ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  const valeurJavaScript = String(valeur ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+
+  return escapeHTML(valeurJavaScript);
+}
+
+function jsonPourAttribut(valeur) {
+  const json = JSON.stringify(valeur);
+  return escapeHTML(json === undefined ? "null" : json);
 }
 
 function champUsernameAutocomplete(id) {
@@ -484,7 +497,7 @@ function memoriserPseudoConnexion(pseudo, doitMemoriser) {
 
     localStorage.removeItem(CLE_PSEUDO_SAUVEGARDE);
   } catch (erreur) {
-    console.warn("Impossible de mettre a jour le pseudo sauvegarde.", erreur);
+    console.warn("Impossible de mettre a jour le pseudo sauvegarde.");
   }
 }
 
@@ -541,7 +554,7 @@ async function connexion() {
     }
 
   } catch (erreur) {
-    console.error("Erreur connexion :", erreur);
+    console.error("Connexion impossible : erreur inattendue.");
 
     message.textContent = "Erreur lors de la connexion.";
     message.style.color = "#ff5555";
@@ -992,7 +1005,7 @@ function afficherRecapitulatif(idCompetition, nomCompetition) {
 
   if (changements.length > 0) {
     html += `
-      <button onclick='confirmerPresences(${idCompetition}, ${JSON.stringify(JSON.stringify(presences))})'>
+      <button onclick='confirmerPresences(${idCompetition}, ${jsonPourAttribut(JSON.stringify(presences))})'>
         Confirmer
       </button>
     `;
@@ -1077,13 +1090,13 @@ function verifierAccesOfficier() {
       }
       afficherChoixOfficier();
     })
-    .catch(function (erreur) {
+    .catch(function () {
       if (message) {
         message.textContent = "Impossible de vérifier le mot de passe.";
         message.style.color = "#ff5555";
       }
 
-      console.error("Erreur vérification mot de passe", erreur);
+      console.error("Vérification du mot de passe impossible : erreur inattendue.");
     });
 }
 
@@ -1855,7 +1868,7 @@ function construireTableauPresencesOfficier(idCompetition, nomCompetition, data)
 
     ligne.disponibilites.forEach(function (dispo) {
       html += `
-        <td onclick='afficherDetailPresence(${JSON.stringify(JSON.stringify(ligne.pseudo))}, ${JSON.stringify(JSON.stringify(dispo))})'>
+        <td onclick='afficherDetailPresence(${jsonPourAttribut(JSON.stringify(ligne.pseudo))}, ${jsonPourAttribut(JSON.stringify(dispo))})'>
           ${formaterAffichagePresence(dispo)}
         </td>
       `;
@@ -1981,7 +1994,7 @@ function afficherGestionCompetitions() {
           <p>${escapeHTML(competition.description || "")}</p>
 
           <button
-            onclick='afficherFormulaireModificationCompetition(${JSON.stringify(JSON.stringify(competition))})'
+            onclick='afficherFormulaireModificationCompetition(${jsonPourAttribut(JSON.stringify(competition))})'
             class="secondary-button">
             ✏️ Modifier
           </button>
@@ -2225,11 +2238,11 @@ function executerChangementStatutCompetition(idCompetition, nouveauStatut, motDe
     },
     function (data) {
       if (!data.succes) {
-        return afficherMessageModal("Erreur", escapeHTML(data.message || "Le statut n'a pas pu être modifié."), afficherGestionCompetitions);
+        return afficherMessageModal("Erreur", data.message || "Le statut n'a pas pu être modifié.", afficherGestionCompetitions);
       }
 
       viderCacheFrontend();
-      afficherMessageModal("Statut modifié", escapeHTML(data.message || "La compétition est maintenant en statut : " + nouveauStatut), afficherGestionCompetitions);
+      afficherMessageModal("Statut modifié", data.message || "La compétition est maintenant en statut : " + nouveauStatut, afficherGestionCompetitions);
     }
   );
 }
@@ -2656,7 +2669,7 @@ function afficherRecapCreationCompetition(config) {
         ${htmlDates}
       </div>
 
-      <button onclick='confirmerCreationCompetitionComplete(${JSON.stringify(JSON.stringify(config))})'>
+      <button onclick='confirmerCreationCompetitionComplete(${jsonPourAttribut(JSON.stringify(config))})'>
         Confirmer la création
       </button>
 
@@ -2951,11 +2964,11 @@ function ajouterJoueurDepuisSite() {
         motDePasse
       }, function (data) {
         if (!data.succes) {
-          return afficherMessageModal("Erreur", escapeHTML(data.message || "Le joueur n'a pas pu être ajouté."));
+          return afficherMessageModal("Erreur", data.message || "Le joueur n'a pas pu être ajouté.");
         }
 
         viderCacheFrontend();
-        afficherMessageModal("Joueur ajouté", escapeHTML(data.message || "Le joueur a bien été ajouté."), afficherGestionJoueurs);
+        afficherMessageModal("Joueur ajouté", data.message || "Le joueur a bien été ajouté.", afficherGestionJoueurs);
       });
     }
   );
@@ -3104,11 +3117,11 @@ function modifierJoueurDepuisSite(idJoueur) {
         motDePasse
       }, function (data) {
         if (!data.succes) {
-          return afficherMessageModal("Erreur", escapeHTML(data.message || "Le joueur n'a pas pu être modifié."));
+          return afficherMessageModal("Erreur", data.message || "Le joueur n'a pas pu être modifié.");
         }
 
         viderCacheFrontend();
-        afficherMessageModal("Joueur modifié", escapeHTML(data.message || "Les informations du joueur ont bien été mises à jour."), afficherGestionJoueurs);
+        afficherMessageModal("Joueur modifié", data.message || "Les informations du joueur ont bien été mises à jour.", afficherGestionJoueurs);
       });
     }
   );
@@ -3215,7 +3228,7 @@ function supprimerJoueurDepuisSite(idJoueur) {
 
   afficherChargement("Suppression du joueur", "Suppression du joueur et de ses présences...");
 
-  appelAPI(
+  appelAPISensible(
     "supprimerJoueur",
     {
       idJoueur,
@@ -3226,7 +3239,7 @@ function supprimerJoueurDepuisSite(idJoueur) {
       if (!data.succes) {
         return afficherMessageModal(
           "Erreur",
-          escapeHTML(data.message || "La suppression du joueur a échoué."),
+          data.message || "La suppression du joueur a échoué.",
           afficherGestionJoueurs
         );
       }
@@ -3236,7 +3249,7 @@ function supprimerJoueurDepuisSite(idJoueur) {
 
       afficherMessageModal(
         "Joueur supprimé",
-        escapeHTML(data.message),
+        data.message,
         afficherGestionJoueurs
       );
     }
@@ -3340,7 +3353,7 @@ function genererCodeLiaisonDiscordDepuisSite() {
                 class="discord-copy-button"
                 title="Copier le code"
                 aria-label="Copier le code"
-                onclick='copierCodeLiaisonDiscord(${JSON.stringify(code)})'>
+                onclick='copierCodeLiaisonDiscord(${jsonPourAttribut(code)})'>
                 📋
               </button>
             </div>
@@ -3507,10 +3520,10 @@ function afficherListeDemandesLiaisonDiscord(demandes) {
         <p>Demande : ${escapeHTML(formaterDateHeureFrance(dateDemande))}</p>
         <p>Expiration du code : ${escapeHTML(formaterDateHeureFrance(expiration))}</p>
         <div class="discord-request-actions">
-          <button onclick='validerDemandeLiaisonDiscordDepuisSite(${JSON.stringify(idDemande)})'>
+          <button onclick='validerDemandeLiaisonDiscordDepuisSite(${jsonPourAttribut(idDemande)})'>
             Valider
           </button>
-          <button class="danger-button" onclick='refuserDemandeLiaisonDiscordDepuisSite(${JSON.stringify(idDemande)})'>
+          <button class="danger-button" onclick='refuserDemandeLiaisonDiscordDepuisSite(${jsonPourAttribut(idDemande)})'>
             Refuser
           </button>
         </div>
@@ -3540,7 +3553,7 @@ function validerDemandeLiaisonDiscordDepuisSite(idDemande) {
             return afficherMessageModal("Erreur", data.message || "Impossible de valider la demande.");
           }
 
-          afficherMessageModal("Liaison validée", escapeHTML(data.message || "La liaison Discord a été validée."), chargerDemandesLiaisonDiscordDepuisSite);
+          afficherMessageModal("Liaison validée", data.message || "La liaison Discord a été validée.", chargerDemandesLiaisonDiscordDepuisSite);
         }
       );
     }
@@ -3569,7 +3582,7 @@ function refuserDemandeLiaisonDiscordDepuisSite(idDemande) {
             return afficherMessageModal("Erreur", data.message || "Impossible de refuser la demande.");
           }
 
-          afficherMessageModal("Liaison refusée", escapeHTML(data.message || "La demande de liaison Discord a été refusée."), chargerDemandesLiaisonDiscordDepuisSite);
+          afficherMessageModal("Liaison refusée", data.message || "La demande de liaison Discord a été refusée.", chargerDemandesLiaisonDiscordDepuisSite);
         }
       );
     }
@@ -3910,16 +3923,51 @@ if (dispo.statut === "Remplaçant") {
 }
 
 function afficherDetailPresence(pseudoJSON, dispoJSON) {
-  const pseudo = JSON.parse(pseudoJSON);
-  const dispo = JSON.parse(dispoJSON);
+  let pseudo;
+  let dispo;
+
+  try {
+    pseudo = JSON.parse(pseudoJSON);
+    dispo = JSON.parse(dispoJSON);
+  } catch (erreur) {
+    afficherMessageModal("Erreur", "Le détail de cette présence est invalide.");
+    return;
+  }
+
   const horairesSelectionnes = String(dispo.horairesDisponibles || "").split(",").map(h => h.trim()).filter(Boolean);
-  let horairesHTML = "";
-  if (
-  (dispo.statut === "Présent" || dispo.statut === "Remplaçant") &&
-  horairesSelectionnes.length > 0
-) horairesHTML = horairesSelectionnes.map(h => `<span class="horaire-badge">✅ ${escapeHTML(h)}</span>`).join("");
-  else horairesHTML = `<p>Aucun horaire disponible.</p>`;
-  afficherMessageModal(escapeHTML(pseudo) + " — " + escapeHTML(dispo.dateAffichage), `<p>Statut : <strong>${escapeHTML(dispo.statut)}</strong></p><div class="horaires-modal">${horairesHTML}</div>`);
+
+  afficherMessageModalAvecContenu(
+    String(pseudo || "") + " — " + String(dispo.dateAffichage || ""),
+    function (zoneMessage) {
+      const statut = document.createElement("p");
+      const statutFort = document.createElement("strong");
+      statut.appendChild(document.createTextNode("Statut : "));
+      statutFort.textContent = String(dispo.statut || "-");
+      statut.appendChild(statutFort);
+      zoneMessage.appendChild(statut);
+
+      const zoneHoraires = document.createElement("div");
+      zoneHoraires.className = "horaires-modal";
+
+      if (
+        (dispo.statut === "Présent" || dispo.statut === "Remplaçant") &&
+        horairesSelectionnes.length > 0
+      ) {
+        horairesSelectionnes.forEach(function (horaire) {
+          const badge = document.createElement("span");
+          badge.className = "horaire-badge";
+          badge.textContent = "✅ " + horaire;
+          zoneHoraires.appendChild(badge);
+        });
+      } else {
+        const aucunHoraire = document.createElement("p");
+        aucunHoraire.textContent = "Aucun horaire disponible.";
+        zoneHoraires.appendChild(aucunHoraire);
+      }
+
+      zoneMessage.appendChild(zoneHoraires);
+    }
+  );
 }
 
 function calculerStatistiquesTableau(lignes) {
@@ -3962,22 +4010,92 @@ function calculerEffectifParHoraire(dates, lignes) {
   });
 }
 
-function afficherConfirmation(titre, message, actionConfirmer) {
+function creerStructureModal(titre) {
   fermerModal();
   const modal = document.createElement("div");
   modal.id = "modal-overlay";
-  modal.innerHTML = `<div class="modal-box"><h2>${escapeHTML(titre)}</h2><p>${escapeHTML(message)}</p><div class="modal-actions"><button class="secondary-button" onclick="fermerModal()">Annuler</button><button id="modal-confirm-button">Confirmer</button></div></div>`;
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-labelledby", "modal-title");
+
+  const boite = document.createElement("div");
+  boite.className = "modal-box";
+
+  const titreModal = document.createElement("h2");
+  titreModal.id = "modal-title";
+  titreModal.textContent = String(titre || "");
+  boite.appendChild(titreModal);
+
+  const zoneMessage = document.createElement("div");
+  zoneMessage.className = "modal-message";
+  boite.appendChild(zoneMessage);
+
+  const actions = document.createElement("div");
+  actions.className = "modal-actions";
+  boite.appendChild(actions);
+
+  modal.appendChild(boite);
   document.body.appendChild(modal);
-  document.getElementById("modal-confirm-button").onclick = function () { fermerModal(); actionConfirmer(); };
+
+  return { modal, zoneMessage, actions };
+}
+
+function afficherConfirmation(titre, message, actionConfirmer) {
+  const structure = creerStructureModal(titre);
+  const texte = document.createElement("p");
+  texte.textContent = String(message || "");
+  structure.zoneMessage.appendChild(texte);
+
+  const boutonAnnuler = document.createElement("button");
+  boutonAnnuler.type = "button";
+  boutonAnnuler.className = "secondary-button";
+  boutonAnnuler.textContent = "Annuler";
+  boutonAnnuler.addEventListener("click", fermerModal);
+
+  const boutonConfirmer = document.createElement("button");
+  boutonConfirmer.type = "button";
+  boutonConfirmer.id = "modal-confirm-button";
+  boutonConfirmer.textContent = "Confirmer";
+  boutonConfirmer.addEventListener("click", function () {
+    fermerModal();
+    if (typeof actionConfirmer === "function") actionConfirmer();
+  });
+
+  structure.actions.appendChild(boutonAnnuler);
+  structure.actions.appendChild(boutonConfirmer);
+  boutonConfirmer.focus();
+}
+
+function afficherMessageModalAvecContenu(titre, construireContenu, actionFermer) {
+  const structure = creerStructureModal(titre);
+  construireContenu(structure.zoneMessage);
+
+  const boutonFermer = document.createElement("button");
+  boutonFermer.type = "button";
+  boutonFermer.id = "modal-close-button";
+  boutonFermer.textContent = "OK";
+
+  function fermerEtContinuer() {
+    fermerModal();
+    if (typeof actionFermer === "function") actionFermer();
+  }
+
+  boutonFermer.addEventListener("click", fermerEtContinuer);
+  structure.modal.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") fermerEtContinuer();
+  });
+  structure.actions.appendChild(boutonFermer);
+  boutonFermer.focus();
 }
 
 function afficherMessageModal(titre, message, actionFermer) {
-  fermerModal();
-  const modal = document.createElement("div");
-  modal.id = "modal-overlay";
-  modal.innerHTML = `<div class="modal-box"><h2>${titre}</h2><div class="modal-message">${message}</div><div class="modal-actions"><button id="modal-close-button">OK</button></div></div>`;
-  document.body.appendChild(modal);
-  document.getElementById("modal-close-button").onclick = function () { fermerModal(); if (actionFermer) actionFermer(); };
+  afficherMessageModalAvecContenu(
+    titre,
+    function (zoneMessage) {
+      zoneMessage.textContent = String(message ?? "");
+    },
+    actionFermer
+  );
 }
 
 function fermerModal() {
@@ -3985,24 +4103,35 @@ function fermerModal() {
   if (ancienneModal) ancienneModal.remove();
 }
 
+function journaliserResultatAPI(action, debut, succes) {
+  const nomAction = String(action || "action-inconnue")
+    .replace(/[^a-zA-Z0-9_.-]/g, "_")
+    .slice(0, 80);
+  const duree = Math.max(0, Math.round(performance.now() - debut));
+  const statut = succes ? "succes" : "echec";
+  const message = `SUPABASE | action=${nomAction} | statut=${statut} | duree=${duree} ms`;
+
+  if (succes) {
+    console.info(message);
+  } else {
+    console.error(message);
+  }
+}
+
 function appelAPI(action, parametres, callback) {
   const debut = performance.now();
 
-  console.log("SUPABASE ▶️", action, parametres);
-
   apiSupabase(action, parametres || {})
     .then(function (reponse) {
-      const duree = Math.round(performance.now() - debut);
-      console.log("SUPABASE ✅", action, duree + " ms", "réponse sensible masquée");
+      journaliserResultatAPI(action, debut, true);
       callback(reponse);
     })
-    .catch(function (erreur) {
-      console.error("SUPABASE ❌", action, erreur);
+    .catch(function () {
+      journaliserResultatAPI(action, debut, false);
 
       callback({
         succes: false,
-        message: "Erreur Supabase.",
-        details: erreur.message || String(erreur)
+        message: "Erreur Supabase."
       });
     });
 }
@@ -4010,21 +4139,17 @@ function appelAPI(action, parametres, callback) {
 function appelAPISensible(action, parametres, callback) {
   const debut = performance.now();
 
-  console.log("SUPABASE ▶️", action, "paramètres sensibles masqués");
-
   apiSupabase(action, parametres || {})
     .then(function (reponse) {
-      const duree = Math.round(performance.now() - debut);
-      console.log("SUPABASE ✅", action, duree + " ms", reponse);
+      journaliserResultatAPI(action, debut, true);
       callback(reponse);
     })
-    .catch(function (erreur) {
-      console.error("SUPABASE ❌", action, erreur);
+    .catch(function () {
+      journaliserResultatAPI(action, debut, false);
 
       callback({
         succes: false,
-        message: "Erreur Supabase.",
-        details: erreur.message || String(erreur)
+        message: "Erreur Supabase."
       });
     });
 }
@@ -4294,8 +4419,8 @@ function changerMotDePasse() {
         afficherChoixOfficier();
       }, 1000);
     })
-    .catch(function (erreur) {
-      console.error("Erreur changement mot de passe :", erreur);
+    .catch(function () {
+      console.error("Changement du mot de passe impossible : erreur inattendue.");
       message.textContent = "Erreur lors du changement de mot de passe.";
       message.style.color = "#ff5555";
     });
@@ -4684,7 +4809,7 @@ function afficherRecapModificationCompetition(config) {
       </div>
 
       ${changements.length > 0
-        ? `<button onclick='confirmerModificationCompetition(${JSON.stringify(JSON.stringify(config))})'>
+        ? `<button onclick='confirmerModificationCompetition(${jsonPourAttribut(JSON.stringify(config))})'>
             Confirmer les modifications
           </button>`
         : ""}
@@ -5023,7 +5148,7 @@ function afficherTableauGestionJoueurs(joueurs) {
           <div class="players-actions-cell">
             <button
               class="secondary-button"
-              onclick='afficherFormulaireModificationJoueur(${JSON.stringify(joueur)})'>
+              onclick='afficherFormulaireModificationJoueur(${jsonPourAttribut(joueur)})'>
               ✏️ Modifier
             </button>
             ${boutonSuppression}

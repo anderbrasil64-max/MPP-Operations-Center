@@ -24,23 +24,83 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
-      - name: Ensure no Jekyll processing
-        run: touch .nojekyll
+      - name: Verify frontend syntax
+        run: |
+          node --check app.js
+          node --check supabase.js
+
+      - name: Build Pages artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -e site-dist ]]; then
+            echo "::error::site-dist already exists before the build."
+            exit 1
+          fi
+
+          mkdir -p site-dist/images
+          cp -- index.html app.js supabase.js style.css CNAME .nojekyll site-dist/
+          cp -- images/logo_mpp_280.webp site-dist/images/
+
+      - name: Verify Pages artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Pages artifact manifest:"
+          find site-dist -type f -printf '%P\n' | LC_ALL=C sort
+
+          expected_manifest="$(printf '%s\n' \
+            '.nojekyll' \
+            'CNAME' \
+            'app.js' \
+            'images/logo_mpp_280.webp' \
+            'index.html' \
+            'style.css' \
+            'supabase.js')"
+          actual_manifest="$(find site-dist -type f -printf '%P\n' | LC_ALL=C sort)"
+
+          if [[ "${actual_manifest}" != "${expected_manifest}" ]]; then
+            echo "::error::The Pages artifact differs from the approved runtime allowlist."
+            exit 1
+          fi
+
+          forbidden_entry="$(find site-dist \
+            \( -type d \( -name '.git' -o -name '.github' -o -name 'supabase' -o -name 'migrations' -o -name 'functions' \) \
+            -o -type f \( -iname '*.sql' -o -iname '*.ts' -o -iname '*.env' -o -iname '.env.*' \
+              -o -iname '*.bak' -o -iname '*.backup' -o -iname '*.old' -o -iname '*.orig' \
+              -o -iname '*.rej' -o -iname '*.tmp' -o -iname '*~' -o -iname '*.pem' \
+              -o -iname '*.key' -o -iname '*.p12' -o -iname '*.pfx' \) \) \
+            -print -quit)"
+          if [[ -n "${forbidden_entry}" ]]; then
+            echo "::error::A forbidden technical, backup, environment, or key file is present in site-dist."
+            exit 1
+          fi
+
+          secret_match="$(grep -RIlE \
+            --exclude='*.webp' \
+            -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|https://(discord(app)?\.com)/api/webhooks/[0-9]+/[A-Za-z0-9._-]+|(SUPABASE_SERVICE_ROLE_KEY|DISCORD_TOKEN|CRON_SECRET|GITHUB_TOKEN)[[:space:]]*[:=][[:space:]]*["'"'][^"'"']{8,}' \
+            site-dist || true)"
+          if [[ -n "${secret_match}" ]]; then
+            echo "::error::A private key, webhook, or secret assignment was detected in site-dist."
+            exit 1
+          fi
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
-          path: .
+          path: site-dist
           name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Deploy to GitHub Pages - Tentative 1
         id: deploy_attempt_1
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
         continue-on-error: true
         with:
           artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
@@ -52,7 +112,7 @@ jobs:
       - name: Deploy to GitHub Pages - Tentative 2
         id: deploy_attempt_2
         if: ${{ steps.deploy_attempt_1.outcome == 'failure' }}
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
         continue-on-error: true
         with:
           artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
@@ -64,7 +124,7 @@ jobs:
       - name: Deploy to GitHub Pages - Tentative 3
         id: deploy_attempt_3
         if: ${{ steps.deploy_attempt_1.outcome == 'failure' && steps.deploy_attempt_2.outcome == 'failure' }}
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
         continue-on-error: true
         with:
           artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}

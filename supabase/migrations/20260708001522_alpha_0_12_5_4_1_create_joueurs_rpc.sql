@@ -82,9 +82,9 @@ begin
 
   if nullif(v_mot_de_passe_attendu, '') is null then
     if v_demandeur_superadmin then
-      v_mot_de_passe_attendu := 'superAD';
+      v_mot_de_passe_attendu := null;
     elsif v_demandeur_officier then
-      v_mot_de_passe_attendu := 'offMPP';
+      v_mot_de_passe_attendu := null;
     end if;
   end if;
 
@@ -317,9 +317,9 @@ begin
 
   if nullif(v_mot_de_passe_attendu, '') is null then
     if v_demandeur_superadmin then
-      v_mot_de_passe_attendu := 'superAD';
+      v_mot_de_passe_attendu := null;
     elsif v_demandeur_officier then
-      v_mot_de_passe_attendu := 'offMPP';
+      v_mot_de_passe_attendu := null;
     end if;
   end if;
 
