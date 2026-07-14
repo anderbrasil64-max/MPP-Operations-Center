@@ -46,9 +46,9 @@ begin
   v_admin_a := public.ouvrir_session_admin_site(v_joueur_a->>'sessionToken', v_credential_a);
   v_admin_a_bis := public.ouvrir_session_admin_site(v_joueur_a->>'sessionToken', v_credential_a);
   v_admin_b := public.ouvrir_session_admin_site(v_joueur_b->>'sessionToken', v_credential_b);
-  if not pg_catalog.coalesce((v_admin_a->>'succes')::boolean, false)
-     or not pg_catalog.coalesce((v_admin_a_bis->>'succes')::boolean, false)
-     or not pg_catalog.coalesce((v_admin_b->>'succes')::boolean, false) then
+  if not coalesce((v_admin_a->>'succes')::boolean, false)
+     or not coalesce((v_admin_a_bis->>'succes')::boolean, false)
+     or not coalesce((v_admin_b->>'succes')::boolean, false) then
     raise exception 'Administrative session setup failed.';
   end if;
 
@@ -70,7 +70,7 @@ begin
     v_payload
   );
 
-  if not pg_catalog.coalesce((v_premier_resultat->>'succes')::boolean, false)
+  if not coalesce((v_premier_resultat->>'succes')::boolean, false)
      or v_rejeu_resultat is distinct from v_premier_resultat then
     raise exception 'An identical operation replay did not return its stored result.';
   end if;

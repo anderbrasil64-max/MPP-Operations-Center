@@ -874,8 +874,8 @@ set search_path = ''
 as $$
 declare
   v_ctx record;
-  v_action text := pg_catalog.lower(pg_catalog.btrim(pg_catalog.coalesce(p_action, '')));
-  v_payload jsonb := pg_catalog.coalesce(p_payload, '{}'::jsonb);
+  v_action text := pg_catalog.lower(pg_catalog.btrim(coalesce(p_action, '')));
+  v_payload jsonb := coalesce(p_payload, '{}'::jsonb);
   v_payload_metier jsonb;
   v_operation_texte text;
   v_operation_id uuid;
@@ -910,7 +910,7 @@ begin
     );
   end if;
 
-  v_operation_texte := pg_catalog.nullif(pg_catalog.btrim(v_payload->>'operationId'), '');
+  v_operation_texte := nullif(pg_catalog.btrim(v_payload->>'operationId'), '');
   if v_operation_texte is null
      or v_operation_texte !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' then
     return pg_catalog.jsonb_build_object(
