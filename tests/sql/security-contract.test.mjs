@@ -38,8 +38,12 @@ test("chaque signature SECURITY DEFINER controle son search_path et son REVOKE",
 });
 
 test("la presence joueur derive l'identite de la session", async () => {
+  const sessions = await readFile("supabase/migrations/20260714092000_alpha_0_13_0_03_short_lived_sessions.sql", "utf8");
   const sql = await readFile("supabase/migrations/20260714093000_alpha_0_13_0_04_session_application_apis.sql", "utf8");
+  const contexte = extraireFonction(sessions, "app_private.contexte_session");
   const joueurApi = extraireFonction(sql, "public.api_joueur_site");
+  assert.match(contexte, /select s\.joueur_id into v_joueur_id\s+from app_private\.sessions s/);
+  assert.doesNotMatch(contexte, /select joueur_id into v_joueur_id/);
   assert.match(joueurApi, /p\.joueur_id = v_ctx\.joueur_id/);
   assert.match(joueurApi, /date_competition_id, joueur_id\) do update/);
   assert.doesNotMatch(joueurApi, /p_payload->>'pseudo'/);
@@ -68,7 +72,7 @@ test("les credentials sont pre-haches et bornes avant bcrypt", async () => {
   assert.match(sessions, /function public\.changer_credential_session_site\(\s*p_session_admin text,\s*p_nouveau_mot_de_passe text/s);
   assert.doesNotMatch(sessions, /p_ancien_mot_de_passe/);
   assert.ok(
-    sessions.indexOf("select joueur_id into v_joueur_id") < sessions.indexOf("for update;"),
+    sessions.indexOf("select s.joueur_id into v_joueur_id") < sessions.indexOf("for update;"),
     "l'identite de session doit etre resolue avant le verrou de ligne"
   );
 });

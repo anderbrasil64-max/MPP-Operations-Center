@@ -260,9 +260,9 @@ begin
 
   -- Resoudre l'identite avant tout verrou de ligne, puis serialiser toutes
   -- les operations de session d'un joueur avec le meme verrou advisory.
-  select joueur_id into v_joueur_id
-  from app_private.sessions
-  where token_hash = extensions.digest(p_token, 'sha256');
+  select s.joueur_id into v_joueur_id
+  from app_private.sessions s
+  where s.token_hash = extensions.digest(p_token, 'sha256');
 
   if not found then return; end if;
 
