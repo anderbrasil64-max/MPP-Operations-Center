@@ -368,6 +368,7 @@ function lastOutputLine(output) {
 
 export async function runDiscordConcurrencyProbe(database) {
   const setup = `
+    create sequence app_private.test_discord_barrier_seq;
     create table app_private.test_discord_barrier (
       worker text primary key,
       backend_pid integer not null,
@@ -402,11 +403,12 @@ export async function runDiscordConcurrencyProbe(database) {
     declare
       v_attempt integer;
     begin
+      perform pg_catalog.nextval('app_private.test_discord_barrier_seq'::pg_catalog.regclass);
       for v_attempt in 1..250 loop
-        exit when (select count(*) from app_private.test_discord_barrier)=2;
+        exit when (select last_value from app_private.test_discord_barrier_seq)=2;
         perform pg_catalog.pg_sleep(0.02);
       end loop;
-      if (select count(*) from app_private.test_discord_barrier)<>2 then
+      if (select last_value from app_private.test_discord_barrier_seq)<>2 then
         raise exception 'Two-connection test barrier timed out.';
       end if;
     end;

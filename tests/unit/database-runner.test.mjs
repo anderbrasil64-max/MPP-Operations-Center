@@ -97,6 +97,8 @@ test("chaque compensation dispose d une base fraiche, d un contrat et d un rejeu
 test("le probe Discord lance deux processus psql derriere une barriere partagee", async () => {
   const runner = await readFile("scripts/run-database-tests.mjs", "utf8");
   assert.match(runner, /test_discord_barrier/);
+  assert.match(runner, /test_discord_barrier_seq/);
+  assert.match(runner, /nextval\('app_private\.test_discord_barrier_seq'/);
   assert.match(runner, /Promise\.all\(\["worker-a", "worker-b"\]/);
   assert.match(runner, /count\(distinct backend_pid\).*<>2/s);
   assert.match(runner, /states\[0\] !== "busy" \|\| states\[1\] !== "claimed"/);
