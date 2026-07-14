@@ -56,11 +56,17 @@ begin
     end if;
     if exists (
       select 1
-      from pg_catalog.aclexplode(coalesce(
-        (select p.proacl from pg_catalog.pg_proc p where p.oid = v_oid),
-        pg_catalog.acldefault('f', (select p.proowner from pg_catalog.pg_proc p where p.oid = v_oid))
-      )) acl
-      where acl.grantee = 0 and acl.privilege_type = 'EXECUTE'
+      from pg_catalog.pg_proc acl_proc
+      cross join lateral pg_catalog.aclexplode(
+        case
+          when acl_proc.proacl is null then pg_catalog.acldefault('f',acl_proc.proowner)
+          when pg_catalog.cardinality(acl_proc.proacl)>0 then acl_proc.proacl
+          else null::pg_catalog.aclitem[]
+        end
+      ) acl
+      where acl_proc.oid = v_oid
+        and acl.grantee = 0
+        and acl.privilege_type = 'EXECUTE'
     ) then
       raise exception 'PUBLIC can execute function: %', v_expected.signature;
     end if;

@@ -22,7 +22,9 @@ begin
     select 1
     from pg_catalog.pg_class c
     join pg_catalog.pg_namespace n on n.oid=c.relnamespace
-    cross join lateral pg_catalog.aclexplode(coalesce(c.relacl,'{}'::pg_catalog.aclitem[])) acl
+    cross join lateral pg_catalog.aclexplode(
+      case when pg_catalog.cardinality(c.relacl)>0 then c.relacl else null::pg_catalog.aclitem[] end
+    ) acl
     left join pg_catalog.pg_roles r on r.oid=acl.grantee
     where n.nspname='public'
       and c.relname=any(array[
@@ -35,7 +37,9 @@ begin
     from pg_catalog.pg_attribute a
     join pg_catalog.pg_class c on c.oid=a.attrelid
     join pg_catalog.pg_namespace n on n.oid=c.relnamespace
-    cross join lateral pg_catalog.aclexplode(coalesce(a.attacl,'{}'::pg_catalog.aclitem[])) acl
+    cross join lateral pg_catalog.aclexplode(
+      case when pg_catalog.cardinality(a.attacl)>0 then a.attacl else null::pg_catalog.aclitem[] end
+    ) acl
     left join pg_catalog.pg_roles r on r.oid=acl.grantee
     where n.nspname='public'
       and c.relname=any(array[
@@ -99,7 +103,9 @@ begin
     select 1
     from pg_catalog.pg_class c
     join pg_catalog.pg_namespace n on n.oid=c.relnamespace
-    cross join lateral pg_catalog.aclexplode(coalesce(c.relacl,'{}'::pg_catalog.aclitem[])) acl
+    cross join lateral pg_catalog.aclexplode(
+      case when pg_catalog.cardinality(c.relacl)>0 then c.relacl else null::pg_catalog.aclitem[] end
+    ) acl
     left join pg_catalog.pg_roles r on r.oid=acl.grantee
     where n.nspname='public' and c.relkind='S'
       and (acl.grantee=0 or r.rolname in ('anon','authenticated'))
@@ -128,10 +134,13 @@ begin
     select 1
     from pg_catalog.pg_proc p
     join pg_catalog.pg_namespace n on n.oid=p.pronamespace
-    cross join lateral pg_catalog.aclexplode(coalesce(
-      p.proacl,
-      pg_catalog.acldefault('f',p.proowner)
-    )) acl
+    cross join lateral pg_catalog.aclexplode(
+      case
+        when p.proacl is null then pg_catalog.acldefault('f',p.proowner)
+        when pg_catalog.cardinality(p.proacl)>0 then p.proacl
+        else null::pg_catalog.aclitem[]
+      end
+    ) acl
     where n.nspname='public'
       and acl.privilege_type='EXECUTE'
       and acl.grantee=0
