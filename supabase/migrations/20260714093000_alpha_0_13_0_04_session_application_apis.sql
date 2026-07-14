@@ -71,6 +71,10 @@ declare
   v_suppressions integer := 0;
   v_horaires_modifies integer := 0;
   v_credential_valide boolean;
+  v_erreur_sqlstate text;
+  v_erreur_schema text;
+  v_erreur_table text;
+  v_erreur_contrainte text;
 begin
   select * into v_ctx from app_private.contexte_session(p_session_token, 'joueur');
   if not found then
@@ -371,6 +375,16 @@ begin
   return jsonb_build_object('succes', false, 'message', 'Action non autorisée.');
 exception
   when others then
+    get stacked diagnostics
+      v_erreur_sqlstate = returned_sqlstate,
+      v_erreur_schema = schema_name,
+      v_erreur_table = table_name,
+      v_erreur_contrainte = constraint_name;
+    raise warning 'api_joueur_site failure: sqlstate=%, schema=%, table=%, constraint=%',
+      v_erreur_sqlstate,
+      nullif(v_erreur_schema, ''),
+      nullif(v_erreur_table, ''),
+      nullif(v_erreur_contrainte, '');
     return jsonb_build_object('succes', false, 'message', 'Action joueur indisponible.');
 end;
 $$;
