@@ -1,2 +1,10 @@
 supabase/.temp/
+node_modules/
 site-dist/
+coverage/
+playwright-report/
+test-results/
+test-results-*/
+.env
+.env.*
+!.env.example

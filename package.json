@@ -1,0 +1,37 @@
+{
+  "name": "mpp-operations-center",
+  "version": "0.13.0-rc.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build-site.mjs",
+    "check:syntax": "node scripts/check-javascript.mjs",
+    "check:security": "node scripts/security-check.mjs",
+    "check:version": "node scripts/check-version.mjs",
+    "check:migrations": "node scripts/check-migrations.mjs",
+    "check:workflows": "node scripts/validate-workflows.mjs",
+    "lint": "eslint app.js supabase.js js scripts tests playwright.config.js",
+    "test:unit": "node --test \"tests/**/*.test.mjs\"",
+    "test:unit:database-runner": "node --test tests/unit/database-runner.test.mjs",
+    "test:database": "node scripts/run-database-tests.mjs",
+    "test:artifact": "node scripts/validate-site-artifact.mjs",
+    "test:e2e": "npm run build && playwright test",
+    "test": "npm run check:syntax && npm run lint && npm run check:security && npm run check:version && npm run check:migrations && npm run check:workflows && npm run test:unit && npm run build && npm run test:artifact",
+    "test:all": "npm test && npm run test:e2e",
+    "ci:pages": "npm run test:all"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "axe-core": "4.12.1",
+    "eslint": "10.7.0",
+    "eslint-plugin-security": "4.0.1",
+    "jsdom": "29.1.1",
+    "yaml": "2.9.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.95.0"
+  }
+}

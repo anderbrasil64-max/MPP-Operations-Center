@@ -1,134 +1,165 @@
 name: Deploy GitHub Pages
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+    inputs:
+      release_confirmation:
+        description: "Saisir exactement : DEPLOY ALPHA 0.13.0 - Security & Reliability"
+        required: true
+        type: string
+      backend_migrations_ready:
+        description: "Migrations 01-05 appliquees et verifiees"
+        required: true
+        type: boolean
+      edge_functions_ready:
+        description: "Huit Edge Functions deployees et verifiees"
+        required: true
+        type: boolean
+      backend_smoke_tests_passed:
+        description: "Smoke tests backend et Edge valides"
+        required: true
+        type: boolean
+      production_release_approved:
+        description: "Mise en production explicitement approuvee"
+        required: true
+        type: boolean
+      exposed_credentials_rotated:
+        description: "Tous les credentials exposes ou privilegies inventories ont ete rotates"
+        required: true
+        type: boolean
+      git_history_scan_reviewed:
+        description: "Scan complet des refs et objets Git revu sans secret actif non rotate"
+        required: true
+        type: boolean
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  readiness:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: https://mpp-clan.fr
+    permissions:
+      contents: read
+    steps:
+      - name: Validate manual production readiness
+        env:
+          RELEASE_CONFIRMATION: ${{ inputs.release_confirmation }}
+          BACKEND_MIGRATIONS_READY: ${{ inputs.backend_migrations_ready }}
+          EDGE_FUNCTIONS_READY: ${{ inputs.edge_functions_ready }}
+          BACKEND_SMOKE_TESTS_PASSED: ${{ inputs.backend_smoke_tests_passed }}
+          PRODUCTION_RELEASE_APPROVED: ${{ inputs.production_release_approved }}
+          EXPOSED_CREDENTIALS_ROTATED: ${{ inputs.exposed_credentials_rotated }}
+          GIT_HISTORY_SCAN_REVIEWED: ${{ inputs.git_history_scan_reviewed }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Deployment refused: dispatch must target main."
+            exit 1
+          fi
+          if [ "$RELEASE_CONFIRMATION" != "DEPLOY ALPHA 0.13.0 - Security & Reliability" ]; then
+            echo "Deployment refused: release confirmation is invalid."
+            exit 1
+          fi
+          for attestation in \
+            "$BACKEND_MIGRATIONS_READY" \
+            "$EDGE_FUNCTIONS_READY" \
+            "$BACKEND_SMOKE_TESTS_PASSED" \
+            "$PRODUCTION_RELEASE_APPROVED" \
+            "$EXPOSED_CREDENTIALS_ROTATED" \
+            "$GIT_HISTORY_SCAN_REVIEWED"
+          do
+            if [ "$attestation" != "true" ]; then
+              echo "Deployment refused: every readiness attestation is required."
+              exit 1
+            fi
+          done
+          echo "Manual production readiness accepted."
 
+  postgresql-17:
+    needs: readiness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Verify PostgreSQL client
+        run: psql --version
+      - name: Run the isolated PostgreSQL 17 release gate
+        run: npm run test:database
+        env:
+          MPP_ALLOW_EPHEMERAL_DATABASE: "1"
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGDATABASE: postgres
+          PGSSLMODE: disable
 
-      - name: Setup Pages
+  build:
+    needs: readiness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install pinned dependencies
+        run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Setup pinned Deno
+        uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        with:
+          deno-version: 2.8.1
+      - name: Check Edge Functions with Deno
+        run: |
+          deno fmt --check supabase/functions
+          deno lint supabase/functions
+          deno check --config supabase/functions/deno.json supabase/functions/*/index.ts
+      - name: Install Chromium runtime
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Run the complete release gate and build the Pages allowlist
+        run: npm run ci:pages
+      - name: Configure Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
-
-      - name: Verify frontend syntax
-        run: |
-          node --check app.js
-          node --check supabase.js
-
-      - name: Build Pages artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -e site-dist ]]; then
-            echo "::error::site-dist already exists before the build."
-            exit 1
-          fi
-
-          mkdir -p site-dist/images
-          cp -- index.html app.js supabase.js style.css CNAME .nojekyll site-dist/
-          cp -- images/logo_mpp_280.webp site-dist/images/
-
-      - name: Verify Pages artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Pages artifact manifest:"
-          find site-dist -type f -printf '%P\n' | LC_ALL=C sort
-
-          expected_manifest="$(printf '%s\n' \
-            '.nojekyll' \
-            'CNAME' \
-            'app.js' \
-            'images/logo_mpp_280.webp' \
-            'index.html' \
-            'style.css' \
-            'supabase.js')"
-          actual_manifest="$(find site-dist -type f -printf '%P\n' | LC_ALL=C sort)"
-
-          if [[ "${actual_manifest}" != "${expected_manifest}" ]]; then
-            echo "::error::The Pages artifact differs from the approved runtime allowlist."
-            exit 1
-          fi
-
-          forbidden_entry="$(find site-dist \
-            \( -type d \( -name '.git' -o -name '.github' -o -name 'supabase' -o -name 'migrations' -o -name 'functions' \) \
-            -o -type f \( -iname '*.sql' -o -iname '*.ts' -o -iname '*.env' -o -iname '.env.*' \
-              -o -iname '*.bak' -o -iname '*.backup' -o -iname '*.old' -o -iname '*.orig' \
-              -o -iname '*.rej' -o -iname '*.tmp' -o -iname '*~' -o -iname '*.pem' \
-              -o -iname '*.key' -o -iname '*.p12' -o -iname '*.pfx' \) \) \
-            -print -quit)"
-          if [[ -n "${forbidden_entry}" ]]; then
-            echo "::error::A forbidden technical, backup, environment, or key file is present in site-dist."
-            exit 1
-          fi
-
-          secret_match="$(grep -RIlE \
-            --exclude='*.webp' \
-            -- "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|https://(discord(app)?\.com)/api/webhooks/[0-9]+/[A-Za-z0-9._-]+|(SUPABASE_SERVICE_ROLE_KEY|DISCORD_TOKEN|CRON_SECRET|GITHUB_TOKEN)[[:space:]]*[:=][[:space:]]*['\"][^'\"]{8,}" \
-            site-dist || true)"
-          if [[ -n "${secret_match}" ]]; then
-            echo "::error::A private key, webhook, or secret assignment was detected in site-dist."
-            exit 1
-          fi
-
-      - name: Upload artifact
+      - name: Upload the allowlisted artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: site-dist
-          name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+          name: github-pages
 
-      - name: Deploy to GitHub Pages - Tentative 1
-        id: deploy_attempt_1
+  deploy:
+    needs: [readiness, build, postgresql-17]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the validated artifact
+        id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
-        continue-on-error: true
-        with:
-          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Attendre avant nouvelle tentative
-        if: ${{ steps.deploy_attempt_1.outcome == 'failure' }}
-        run: sleep 60
-
-      - name: Deploy to GitHub Pages - Tentative 2
-        id: deploy_attempt_2
-        if: ${{ steps.deploy_attempt_1.outcome == 'failure' }}
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
-        continue-on-error: true
-        with:
-          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Attendre avant derniere tentative
-        if: ${{ steps.deploy_attempt_1.outcome == 'failure' && steps.deploy_attempt_2.outcome == 'failure' }}
-        run: sleep 90
-
-      - name: Deploy to GitHub Pages - Tentative 3
-        id: deploy_attempt_3
-        if: ${{ steps.deploy_attempt_1.outcome == 'failure' && steps.deploy_attempt_2.outcome == 'failure' }}
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
-        continue-on-error: true
-        with:
-          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Verifier le resultat du deploiement
-        if: ${{ steps.deploy_attempt_1.outcome == 'failure' && steps.deploy_attempt_2.outcome == 'failure' && steps.deploy_attempt_3.outcome == 'failure' }}
-        run: exit 1
