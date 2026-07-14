@@ -85,7 +85,7 @@ jobs:
 
           secret_match="$(grep -RIlE \
             --exclude='*.webp' \
-            -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|https://(discord(app)?\.com)/api/webhooks/[0-9]+/[A-Za-z0-9._-]+|(SUPABASE_SERVICE_ROLE_KEY|DISCORD_TOKEN|CRON_SECRET|GITHUB_TOKEN)[[:space:]]*[:=][[:space:]]*["'"'][^"'"']{8,}' \
+            -- "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|https://(discord(app)?\.com)/api/webhooks/[0-9]+/[A-Za-z0-9._-]+|(SUPABASE_SERVICE_ROLE_KEY|DISCORD_TOKEN|CRON_SECRET|GITHUB_TOKEN)[[:space:]]*[:=][[:space:]]*['\"][^'\"]{8,}" \
             site-dist || true)"
           if [[ -n "${secret_match}" ]]; then
             echo "::error::A private key, webhook, or secret assignment was detected in site-dist."
