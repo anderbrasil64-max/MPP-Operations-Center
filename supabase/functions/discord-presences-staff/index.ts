@@ -19,23 +19,15 @@ import {
   snapshotDepuisReservation,
   type SnapshotDiscord,
 } from "../_shared/fragments.ts";
-import { construireRappelPresences } from "../_shared/messages.ts";
+import { construireResumeStaff } from "../_shared/messages.ts";
 
-const CLE_RESERVATION = "sans_reponse_17h";
+const CLE_RESERVATION = "presence_staff";
 
 type Competition = {
   id: number;
   nom: string;
-  roles_autorises: string | null;
-  rappel_presence_active: boolean;
-  heure_rappel_presence: string | null;
-};
-
-type Joueur = {
-  id: number;
-  pseudo: string;
-  roles: string;
-  discord_id: string | null;
+  notification_presence_active: boolean;
+  heure_notification_presence: string | null;
 };
 
 type Presence = {
@@ -52,34 +44,16 @@ type DonneesRappelsDiscord = {
     date_competition: string;
   }>;
   competitions: Competition[];
-  joueurs: Joueur[];
+  joueurs: Array<{
+    id: number;
+    pseudo: string;
+    roles: string;
+    discord_id: string | null;
+  }>;
   presences: Presence[];
 };
 
 type EchecEnvoi = { code: string; incertain?: boolean; terminal?: boolean };
-
-function normaliserRole(role: string): string {
-  return role.trim().toLocaleLowerCase("fr-FR").normalize("NFD").replace(
-    /[\u0300-\u036f]/g,
-    "",
-  );
-}
-
-function roles(texte: string | null | undefined): string[] {
-  return String(texte || "").split(",").map(normaliserRole).filter(Boolean);
-}
-
-function joueurAutorise(joueur: Joueur, competition: Competition): boolean {
-  const autorises = roles(competition.roles_autorises);
-  return !autorises.length ||
-    roles(joueur.roles).some((role) => autorises.includes(role));
-}
-
-function statutRenseigne(statut: unknown): boolean {
-  return ["présent", "absent", "remplaçant"].includes(
-    String(statut || "").trim().toLocaleLowerCase("fr-FR"),
-  );
-}
 
 function finalisationConforme(
   finalisation: Record<string, unknown> | null,
@@ -105,13 +79,12 @@ Deno.serve(async (req: Request) => {
   }
   const deadlineMs = creerDeadlineGlobale();
   try {
-    if (!secretCronValide(req, "CRON_SECRET_RAPPEL_PRESENCES")) {
+    if (!secretCronValide(req, "CRON_SECRET_PRESENCES_STAFF")) {
       return json({ succes: false }, 401);
     }
     const supabase = clientService(deadlineMs);
-    const webhook = envObligatoire("DISCORD_WEBHOOK_RAPPEL_PRESENCES");
+    const webhook = envObligatoire("DISCORD_WEBHOOK_STAFF");
     const maintenant = dateHeureParis();
-
     verifierDeadline(deadlineMs, 12_000);
     const { data: donneesBrutes, error: erreurDonnees } = await supabase.rpc(
       "charger_donnees_rappels_discord_site",
@@ -125,22 +98,14 @@ Deno.serve(async (req: Request) => {
       !Array.isArray(donnees.joueurs) ||
       !Array.isArray(donnees.presences)
     ) {
-      throw new Error("LECTURE_SNAPSHOT_RAPPEL");
+      throw new Error("LECTURE_SNAPSHOT_STAFF");
     }
     if (!donnees.dates.length) {
-      return json({
-        succes: true,
-        date: maintenant.date,
-        analysees: 0,
-        envoyees: 0,
-        ignorees: 0,
-      });
+      return json({ succes: true, analysees: 0, envoyees: 0 });
     }
 
     const resultats: Array<Record<string, unknown>> = [];
-    const competitionsTriees = [...donnees.competitions]
-      .sort((a, b) => Number(a.id) - Number(b.id));
-    const joueursTries = [...donnees.joueurs].sort((a, b) =>
+    const competitionsTriees = [...donnees.competitions].sort((a, b) =>
       Number(a.id) - Number(b.id)
     );
     for (const competition of competitionsTriees) {
@@ -149,8 +114,8 @@ Deno.serve(async (req: Request) => {
         continue;
       }
       try {
-        const heure = heureHHMM(competition.heure_rappel_presence);
-        if (!competition.rappel_presence_active) {
+        const heure = heureHHMM(competition.heure_notification_presence);
+        if (!competition.notification_presence_active) {
           resultats.push({ competitionId: competition.id, statut: "inactive" });
           continue;
         }
@@ -162,34 +127,32 @@ Deno.serve(async (req: Request) => {
           continue;
         }
 
+        const lignes = donnees.presences.filter((presence) =>
+          Number(presence.competition_id) === Number(competition.id)
+        );
+        const compte = (statut: string) =>
+          lignes.filter((presence) =>
+            String(presence.statut || "").toLocaleLowerCase("fr-FR") === statut
+          ).length;
+        const presents = compte("présent");
+        const remplacants = compte("remplaçant");
+        const absents = compte("absent");
         const repondants = new Set(
-          donnees.presences
+          lignes
             .filter((presence) =>
-              Number(presence.competition_id) === Number(competition.id) &&
-              statutRenseigne(presence.statut)
+              ["présent", "remplaçant", "absent"].includes(
+                String(presence.statut || "").toLocaleLowerCase("fr-FR"),
+              )
             )
             .map((presence) => Number(presence.joueur_id)),
-        );
-        const sansReponse = joueursTries.filter((joueur) =>
-          joueurAutorise(joueur, competition) &&
-          !repondants.has(Number(joueur.id))
-        );
-        const lies = sansReponse.filter((joueur) =>
-          /^\d{17,20}$/.test(joueur.discord_id || "")
-        );
-        const nonLies = sansReponse.filter((joueur) =>
-          !/^\d{17,20}$/.test(joueur.discord_id || "")
-        );
-        const candidat = await creerSnapshotDiscord(
-          sansReponse.length
-            ? construireRappelPresences(
-              competition,
-              maintenant.date,
-              lies,
-              nonLies,
-            )
-            : [],
-        );
+        ).size;
+        const resume = construireResumeStaff(competition, maintenant.date, {
+          presents,
+          remplacants,
+          absents,
+          repondants,
+        });
+        const candidat = await creerSnapshotDiscord([resume]);
 
         verifierDeadline(deadlineMs, 8_000);
         const { data: reservation, error: erreurReservation } = await supabase
@@ -204,7 +167,7 @@ Deno.serve(async (req: Request) => {
             p_fragment_count: candidat.fragmentCount,
           });
         if (erreurReservation || !reservation?.succes) {
-          throw new Error("RESERVATION_RAPPEL");
+          throw new Error("RESERVATION_STAFF");
         }
         if (!["claimed", "retry_claimed"].includes(reservation.etat)) {
           resultats.push({
@@ -216,30 +179,6 @@ Deno.serve(async (req: Request) => {
 
         const snapshot = await snapshotDepuisReservation(reservation);
         const metadataReservation = metadataDepuisReservation(reservation);
-        if (!snapshot.fragmentCount) {
-          const { data: finalisationVide, error: erreurFinalisationVide } =
-            await supabase.rpc("finaliser_envoi_discord_site", {
-              p_rappel_id: metadataReservation.rappelId,
-              p_execution_id: metadataReservation.executionId,
-              p_statut: "aucun_joueur",
-              p_snapshot_hash: snapshot.snapshotHash,
-              p_fragment_count: snapshot.fragmentCount,
-            });
-          if (
-            erreurFinalisationVide ||
-            !finalisationConforme(
-              finalisationVide,
-              snapshot,
-              "aucun_joueur",
-            )
-          ) throw new Error("FINALISATION_RAPPEL_VIDE");
-          resultats.push({
-            competitionId: competition.id,
-            statut: "aucun_joueur",
-          });
-          continue;
-        }
-
         let echec: EchecEnvoi | null = null;
         let envoyes = 0;
         for (const fragmentSnapshot of snapshot.fragments) {
@@ -287,7 +226,7 @@ Deno.serve(async (req: Request) => {
             fragmentSnapshot.contenu,
             {
               deadlineMs,
-              utilisateursAutorises: fragmentSnapshot.mentionsAutorisees,
+              utilisateursAutorises: [],
             },
           );
           if (envoi.incertain) {
@@ -332,13 +271,13 @@ Deno.serve(async (req: Request) => {
             p_statut: statutFinal,
             p_snapshot_hash: snapshot.snapshotHash,
             p_fragment_count: snapshot.fragmentCount,
-            p_nb_joueurs: sansReponse.length,
-            p_nb_mentions: lies.length,
-            p_nb_sans_discord: nonLies.length,
+            p_nb_joueurs: repondants,
             p_nb_messages: envoyes,
             p_details: {
               version: "0.13.0",
-              messagesAttendus: snapshot.fragmentCount,
+              presents,
+              remplacants,
+              absents,
               tentativeReservation: metadataReservation.tentative,
               etatReservation: metadataReservation.etat,
             },
@@ -347,22 +286,22 @@ Deno.serve(async (req: Request) => {
         if (
           erreurFinalisation ||
           !finalisationConforme(finalisation, snapshot, statutFinal)
-        ) throw new Error("FINALISATION_RAPPEL");
+        ) throw new Error("FINALISATION_STAFF");
         resultats.push({
           competitionId: competition.id,
           statut: statutFinal,
           messages: envoyes,
         });
       } catch (erreurCompetition) {
-        erreurSecurisee("rappel_competition_echec", erreurCompetition);
+        erreurSecurisee("discord_staff_competition_echec", erreurCompetition);
         resultats.push({
           competitionId: competition.id,
           statut: "echec_traitement",
         });
       }
     }
-    logSecurise("rappel_presences_termine", {
-      fonction: "rappel-presences-discord",
+    logSecurise("discord_staff_termine", {
+      fonction: "discord-presences-staff",
       date: maintenant.date,
       statut: "termine",
     });
@@ -373,10 +312,10 @@ Deno.serve(async (req: Request) => {
       resultats,
     });
   } catch (erreur) {
-    erreurSecurisee("rappel_presences_echec", erreur);
-    return json({
-      succes: false,
-      message: "Traitement du rappel indisponible.",
-    }, 500);
+    erreurSecurisee("discord_staff_echec", erreur);
+    return json(
+      { succes: false, message: "Notification staff indisponible." },
+      500,
+    );
   }
 });

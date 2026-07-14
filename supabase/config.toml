@@ -1,0 +1,23 @@
+[functions.rappel-presences-discord]
+verify_jwt = false
+
+[functions.discord-presences-staff]
+verify_jwt = false
+
+[functions.auto-statut-competitions]
+verify_jwt = false
+
+[functions.discord-link-code]
+verify_jwt = false
+
+[functions.discord-link-admin]
+verify_jwt = false
+
+[functions.discord-link-interactions]
+verify_jwt = false
+
+[functions.discord-register-commands]
+verify_jwt = false
+
+[functions.maintenance-securite]
+verify_jwt = false
