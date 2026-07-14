@@ -194,7 +194,6 @@ begin
       end if;
     end loop;
   end if;
-  end if;
 
   if not has_function_privilege('anon', 'public.ouvrir_session_joueur_site(text,text)', 'EXECUTE')
      or not has_function_privilege('anon', 'public.api_joueur_site(text,text,jsonb)', 'EXECUTE') then
