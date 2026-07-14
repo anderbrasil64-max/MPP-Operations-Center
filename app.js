@@ -1,5213 +1,1146 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
-   Frontend JavaScript optimisé
-   Version Alpha 0.12.8.1 - Supabase
+   Orchestrateur frontend
+   Version Alpha 0.13.0 - Security & Reliability
    ========================================================== */
 
-const VERSION_SITE = "Alpha 0.12.8.1 - Supabase";
-const CLE_PSEUDO_SAUVEGARDE = "mpp_saved_pseudo";
-let utilisateurConnecte = null;
-let accesOfficierValide = false;
-let cacheFrontend = {
-  competitions: null,
-  competitionComplete: {},
-  tableauPresences: {},
-  donneesOfficierInitiales: null,
-  timestamp: {}
-};
-let journalActiviteEntrees = [];
-let journalActiviteFiltres = {
-  dates: new Set(),
-  utilisateurs: new Set(),
-  actions: new Set()
-};
-let journalActiviteValeursFiltres = {
-  dates: [],
-  utilisateurs: [],
-  actions: []
-};
-const STATUTS_GESTION_JOUEURS = ["Actif", "Inactif", "Suspendu"];
-const ORDRE_GRADES_JOUEURS = ["superadmin", "officier", "strateur", "soldat", "reserviste", "recrue"];
-let triGestionJoueurs = {
-  colonne: "pseudo",
-  direction: "asc"
-};
-let filtresStatutGestionJoueurs = new Set(STATUTS_GESTION_JOUEURS);
-let motDePasseDemandesDiscord = "";
-let nbDemandesLiaisonDiscord = null;
-let competitionModificationInitiale = null;
-let presencesInitialesSession = {};
-let donneesAujourdHuiOfficier = null;
+(function initialiserMPP(global) {
+  "use strict";
 
-const DUREE_CACHE_FRONT_MS = 5 * 60 * 1000;
+  const UI = global.MPPUI;
+  const State = global.MPPState;
+  const Logger = global.MPPLogger;
+  const Joueurs = global.MPPJoueurs;
+  const Presences = global.MPPPresences;
+  const Competitions = global.MPPCompetitions;
+  const Discord = global.MPPDiscord;
+  const Journal = global.MPPJournal;
+  const VERSION_SITE = global.MPP_CONFIG.version;
+  const CLE_PSEUDO = global.MPP_CONFIG.savedPseudoKey;
 
-function initialiserApplication() {
-  afficherConnexion();
-  afficherVersionSite();
-}
-
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initialiserApplication);
-} else {
-  initialiserApplication();
-}
-
-function estCacheValide(cle) {
-  return cacheFrontend.timestamp[cle] && Date.now() - cacheFrontend.timestamp[cle] < DUREE_CACHE_FRONT_MS;
-}
-
-function mettreEnCache(cle, valeur) {
-  cacheFrontend[cle] = valeur;
-  cacheFrontend.timestamp[cle] = Date.now();
-}
-
-function viderCacheFrontend() {
-  cacheFrontend = {
-    competitions: null,
-    competitionComplete: {},
-    tableauPresences: {},
-    donneesOfficierInitiales: null,
-    timestamp: {}
-  };
-}
-
-function escapeHTML(valeur) {
-  return String(valeur ?? "").replace(/[&<>"']/g, function(char) {
-    const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
-    return map[char];
-  });
-}
-
-function jsString(valeur) {
-  const valeurJavaScript = String(valeur ?? "")
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/\r/g, "\\r")
-    .replace(/\n/g, "\\n")
-    .replace(/\u2028/g, "\\u2028")
-    .replace(/\u2029/g, "\\u2029");
-
-  return escapeHTML(valeurJavaScript);
-}
-
-function jsonPourAttribut(valeur) {
-  const json = JSON.stringify(valeur);
-  return escapeHTML(json === undefined ? "null" : json);
-}
-
-function champUsernameAutocomplete(id) {
-  const pseudo = utilisateurConnecte?.joueur?.pseudo || "";
-  if (!pseudo) return "";
-
-  return `
-    <input
-      type="text"
-      id="${escapeHTML(id)}"
-      name="username"
-      value="${escapeHTML(pseudo)}"
-      autocomplete="username"
-      readonly
-      tabindex="-1"
-      aria-hidden="true"
-      style="position:absolute;left:-10000px;width:1px;height:1px;opacity:0;pointer-events:none;"
-    >
-  `;
-}
-
-function normaliserValeurComparaison(valeur) {
-  return String(valeur ?? "").trim().replace(/\s+/g, " ");
-}
-
-function normaliserTexteComparaison(valeur) {
-  return normaliserValeurComparaison(valeur)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
-
-function valeursIdentiques(ancienneValeur, nouvelleValeur) {
-  return normaliserValeurComparaison(ancienneValeur) ===
-    normaliserValeurComparaison(nouvelleValeur);
-}
-
-function normaliserBooleenComparaison(valeur) {
-  return valeur === true || valeur === "true" || valeur === "oui";
-}
-
-function normaliserHeureComparaison(valeur) {
-  const match = normaliserValeurComparaison(valeur).match(/^([01]\d|2[0-3]):([0-5]\d)/);
-  return match ? match[1] + ":" + match[2] : "";
-}
-
-function normaliserRolesComparaison(roles) {
-  return String(roles || "")
-    .split(",")
-    .map(function (role) { return normaliserValeurComparaison(role); })
-    .filter(Boolean);
-}
-
-function rolesIdentiques(anciensRoles, nouveauxRoles) {
-  const anciens = normaliserRolesComparaison(anciensRoles)
-    .map(normaliserTexteComparaison)
-    .sort()
-    .join("|");
-  const nouveaux = normaliserRolesComparaison(nouveauxRoles)
-    .map(normaliserTexteComparaison)
-    .sort()
-    .join("|");
-
-  return anciens === nouveaux;
-}
-
-function afficherRolesComparaison(roles) {
-  const rolesLisibles = normaliserRolesComparaison(roles);
-  return rolesLisibles.length > 0 ? rolesLisibles.join(", ") : "Aucun";
-}
-
-function afficherTexteComparaison(valeur) {
-  const texte = normaliserValeurComparaison(valeur);
-  return texte || "Vide";
-}
-
-function creerLigneChangement(libelle, ancienneValeur, nouvelleValeur) {
-  return {
-    libelle: libelle,
-    ancienneValeur: ancienneValeur,
-    nouvelleValeur: nouvelleValeur
-  };
-}
-
-function rendreLignesChangements(changements) {
-  if (!changements || changements.length === 0) {
-    return `<p>Aucune modification détectée.</p>`;
+  function resultatErreur(message) {
+    return { succes: false, message: message || "Une erreur est survenue." };
   }
 
-  return changements.map(function (changement) {
-    return `
-      <p>
-        <strong>${escapeHTML(changement.libelle)}</strong> :
-        ${escapeHTML(changement.ancienneValeur)} → ${escapeHTML(changement.nouvelleValeur)}
-      </p>
-    `;
-  }).join("");
-}
-
-function normaliserCompetitionModification(config) {
-  const fermetureAutoActive = normaliserBooleenComparaison(config.fermetureAutoActive);
-  const notificationPresenceActive = normaliserBooleenComparaison(config.notificationPresenceActive);
-  const rappelPresenceActive = normaliserBooleenComparaison(config.rappelPresenceActive);
-
-  return {
-    nom: normaliserValeurComparaison(config.nom),
-    description: normaliserValeurComparaison(config.description),
-    statut: normaliserValeurComparaison(config.statut || "Brouillon"),
-    rolesAutorises: normaliserRolesComparaison(config.rolesAutorises).join(","),
-    fermetureAutoActive: fermetureAutoActive,
-    heureOuvertureAuto: fermetureAutoActive ? normaliserHeureComparaison(config.heureOuvertureAuto || config.heureOuverture) : "",
-    heureFermetureAuto: fermetureAutoActive ? normaliserHeureComparaison(config.heureFermetureAuto || config.heureFermeture) : "",
-    notificationPresenceActive: notificationPresenceActive,
-    heureNotificationPresence: notificationPresenceActive ? normaliserHeureComparaison(config.heureNotificationPresence) : "",
-    rappelPresenceActive: rappelPresenceActive,
-    heureRappelPresence: rappelPresenceActive ? normaliserHeureComparaison(config.heureRappelPresence) : ""
-  };
-}
-
-function libelleActivation(active) {
-  return active ? "Activée" : "Désactivée";
-}
-
-function libelleOptionHeure(active, heure) {
-  return active ? "Activée à " + (heure || "-") : "Désactivée";
-}
-
-function libelleFermetureAuto(etat) {
-  if (!etat.fermetureAutoActive) return "Désactivée";
-  return "Activée, ouverture " +
-    (etat.heureOuvertureAuto || "-") +
-    ", fermeture " +
-    (etat.heureFermetureAuto || "-");
-}
-
-function comparerOptionHoraire(changements, options) {
-  if (options.ancienActif !== options.nouveauActif) {
-    changements.push(creerLigneChangement(
-      options.libelleActivation,
-      libelleOptionHeure(options.ancienActif, options.ancienneHeure),
-      libelleOptionHeure(options.nouveauActif, options.nouvelleHeure)
-    ));
-    return;
-  }
-
-  if (options.nouveauActif && options.ancienneHeure !== options.nouvelleHeure) {
-    changements.push(creerLigneChangement(
-      options.libelleHeure,
-      options.ancienneHeure || "-",
-      options.nouvelleHeure || "-"
-    ));
-  }
-}
-
-function comparerModificationCompetition(config) {
-  const ancien = normaliserCompetitionModification(competitionModificationInitiale || {});
-  const nouveau = normaliserCompetitionModification(config);
-  const changements = [];
-
-  if (!valeursIdentiques(ancien.nom, nouveau.nom)) {
-    changements.push(creerLigneChangement("Nom", afficherTexteComparaison(ancien.nom), afficherTexteComparaison(nouveau.nom)));
-  }
-
-  if (!valeursIdentiques(ancien.description, nouveau.description)) {
-    changements.push(creerLigneChangement("Description", afficherTexteComparaison(ancien.description), afficherTexteComparaison(nouveau.description)));
-  }
-
-  if (!valeursIdentiques(ancien.statut, nouveau.statut)) {
-    changements.push(creerLigneChangement("Statut", ancien.statut, nouveau.statut));
-  }
-
-  if (!rolesIdentiques(ancien.rolesAutorises, nouveau.rolesAutorises)) {
-    changements.push(creerLigneChangement(
-      "Rôles autorisés",
-      afficherRolesComparaison(ancien.rolesAutorises),
-      afficherRolesComparaison(nouveau.rolesAutorises)
-    ));
-  }
-
-  if (ancien.fermetureAutoActive !== nouveau.fermetureAutoActive) {
-    changements.push(creerLigneChangement(
-      "Fermeture automatique",
-      libelleFermetureAuto(ancien),
-      libelleFermetureAuto(nouveau)
-    ));
-  } else if (
-    nouveau.fermetureAutoActive &&
-    (
-      ancien.heureOuvertureAuto !== nouveau.heureOuvertureAuto ||
-      ancien.heureFermetureAuto !== nouveau.heureFermetureAuto
-    )
-  ) {
-    changements.push(creerLigneChangement(
-      "Horaires de fermeture automatique",
-      "ouverture " + (ancien.heureOuvertureAuto || "-") + ", fermeture " + (ancien.heureFermetureAuto || "-"),
-      "ouverture " + (nouveau.heureOuvertureAuto || "-") + ", fermeture " + (nouveau.heureFermetureAuto || "-")
-    ));
-  }
-
-  comparerOptionHoraire(changements, {
-    libelleActivation: "Notification Discord des présences",
-    libelleHeure: "Heure de notification Discord des présences",
-    ancienActif: ancien.notificationPresenceActive,
-    nouveauActif: nouveau.notificationPresenceActive,
-    ancienneHeure: ancien.heureNotificationPresence,
-    nouvelleHeure: nouveau.heureNotificationPresence
-  });
-
-  comparerOptionHoraire(changements, {
-    libelleActivation: "Rappel Discord des joueurs sans réponse",
-    libelleHeure: "Heure du rappel Discord",
-    ancienActif: ancien.rappelPresenceActive,
-    nouveauActif: nouveau.rappelPresenceActive,
-    ancienneHeure: ancien.heureRappelPresence,
-    nouvelleHeure: nouveau.heureRappelPresence
-  });
-
-  return changements;
-}
-
-function statutPresenceLisible(statut) {
-  const statutNormalise = normaliserTexteComparaison(statut);
-
-  if (statutNormalise === "present") return "Présent";
-  if (statutNormalise === "absent") return "Absent";
-  if (statutNormalise === "remplacant") return "Remplaçant";
-
-  return "Non renseigné";
-}
-
-function presenceEstRenseignee(statut) {
-  const statutLisible = statutPresenceLisible(statut);
-  return statutLisible === "Présent" ||
-    statutLisible === "Absent" ||
-    statutLisible === "Remplaçant";
-}
-
-function normaliserHorairesComparaison(horaires) {
-  return String(horaires || "")
-    .split(",")
-    .map(function (horaire) { return normaliserValeurComparaison(horaire); })
-    .filter(Boolean)
-    .join(", ");
-}
-
-function horairesPresenceUtiles(statut, horaires) {
-  const statutLisible = statutPresenceLisible(statut);
-  if (statutLisible !== "Présent" && statutLisible !== "Remplaçant") {
-    return "";
-  }
-
-  return normaliserHorairesComparaison(horaires);
-}
-
-function creerIndexPresencesInitiales(dates, presencesExistantes) {
-  const index = {};
-
-  (dates || []).forEach(function (date) {
-    const dateCompetition = String(date.dateCompetition || "").trim();
-    if (!dateCompetition) return;
-
-    index[dateCompetition] = {
-      dateCompetition: dateCompetition,
-      dateAffichage: date.dateAffichage || dateCompetition,
-      statut: "Non renseigné",
-      horairesDisponibles: ""
-    };
-  });
-
-  (presencesExistantes || []).forEach(function (presence) {
-    const dateCompetition = String(presence.dateCompetition || "").trim();
-    if (!dateCompetition) return;
-
-    if (!index[dateCompetition]) {
-      index[dateCompetition] = {
-        dateCompetition: dateCompetition,
-        dateAffichage: dateCompetition,
-        statut: "Non renseigné",
-        horairesDisponibles: ""
-      };
-    }
-
-    index[dateCompetition].statut = statutPresenceLisible(presence.statut);
-    index[dateCompetition].horairesDisponibles = horairesPresenceUtiles(
-      presence.statut,
-      presence.horairesDisponibles
-    );
-  });
-
-  return index;
-}
-
-function comparerPresencesSession(presences) {
-  const changements = [];
-
-  (presences || []).forEach(function (presence) {
-    const dateCompetition = String(presence.dateCompetition || "").trim();
-    const initiale = presencesInitialesSession[dateCompetition] || {
-      dateCompetition: dateCompetition,
-      dateAffichage: dateCompetition,
-      statut: "Non renseigné",
-      horairesDisponibles: ""
-    };
-
-    const ancienStatut = statutPresenceLisible(initiale.statut);
-    const nouveauStatut = statutPresenceLisible(presence.statut);
-    const ancienRenseigne = presenceEstRenseignee(ancienStatut);
-    const nouveauRenseigne = presenceEstRenseignee(nouveauStatut);
-    const anciensHoraires = horairesPresenceUtiles(ancienStatut, initiale.horairesDisponibles);
-    const nouveauxHoraires = horairesPresenceUtiles(nouveauStatut, presence.horairesDisponibles);
-    const dateAffichage = initiale.dateAffichage || dateCompetition;
-
-    if (ancienStatut !== nouveauStatut) {
-      let libelle = "Modification";
-
-      if (!ancienRenseigne && nouveauRenseigne) {
-        libelle = "Ajout";
-      } else if (ancienRenseigne && !nouveauRenseigne) {
-        libelle = "Suppression de réponse";
+  async function appelAPI(action, parametres) {
+    const debut = performance.now();
+    Logger.information("api_debut", { action });
+    try {
+      const resultat = await global.apiSupabase(action, parametres || {});
+      Logger.information("api_fin", {
+        action,
+        statut: resultat?.succes ? "succes" : "refus",
+        dureeMs: Math.round(performance.now() - debut)
+      });
+      if (resultat?.code === "SESSION_EXPIREE") {
+        if (resultat.porteeSession === "joueur") {
+          global.MPPSession.toutEffacer();
+          State.effacer();
+        } else {
+          global.MPPSession.effacerSessionAdmin();
+          State.etat.accesAdmin = false;
+          State.etat.estSuperAdmin = false;
+        }
       }
-
-      changements.push({
-        dateAffichage: dateAffichage,
-        texte: ancienStatut + " → " + nouveauStatut,
-        libelle: libelle
+      return resultat || resultatErreur("Réponse serveur invalide.");
+    } catch (_erreur) {
+      Logger.erreur("api_exception", {
+        action,
+        statut: "erreur",
+        dureeMs: Math.round(performance.now() - debut)
       });
-      return;
+      return resultatErreur("Service temporairement indisponible.");
     }
-
-    if (
-      ancienRenseigne &&
-      nouveauRenseigne &&
-      anciensHoraires !== nouveauxHoraires
-    ) {
-      changements.push({
-        dateAffichage: dateAffichage,
-        texte: "horaires modifiés — " +
-          (anciensHoraires || "Aucun horaire") +
-          " → " +
-          (nouveauxHoraires || "Aucun horaire"),
-        libelle: "Horaires modifiés"
-      });
-    }
-  });
-
-  return changements;
-}
-
-function rendreChangementsPresences(changements) {
-  if (!changements || changements.length === 0) {
-    return `<p>Aucune modification détectée.</p>`;
   }
 
-  return changements.map(function (changement) {
-    return `
-      <p>
-        <strong>${escapeHTML(changement.dateAffichage)}</strong> :
-        ${escapeHTML(changement.texte)}
-      </p>
-    `;
-  }).join("");
-}
+  const appelAPISensible = appelAPI;
 
-function definirModeCarte(mode) {
-  const app = document.getElementById("app");
-  if (!app) return;
-  app.classList.remove("mode-large");
-  if (mode === "large") app.classList.add("mode-large");
-}
-
-function setContenu(html) {
-  document.getElementById("contenu").innerHTML = html;
-}
-
-function afficherChargement(titre, texte = "Chargement...") {
-  setContenu(`<div class="form-zone"><h2>${escapeHTML(titre)}</h2><p>${escapeHTML(texte)}</p></div>`);
-}
-
-function afficherErreur(message, boutonRetourHTML = "") {
-  setContenu(`<div class="form-zone"><h2>Erreur</h2><p class="error">${escapeHTML(message)}</p>${boutonRetourHTML}</div>`);
-}
-
-function afficherVersionSite() {
-  const elementVersion = document.getElementById("version-site");
-  if (elementVersion) elementVersion.textContent = "Version " + VERSION_SITE;
-}
-
-function lirePseudoSauvegarde() {
-  try {
-    return String(localStorage.getItem(CLE_PSEUDO_SAUVEGARDE) || "").trim();
-  } catch (erreur) {
-    return "";
+  function estSucces(resultat) {
+    return resultat?.succes === true || resultat?.success === true;
   }
-}
 
-function memoriserPseudoConnexion(pseudo, doitMemoriser) {
-  try {
-    if (doitMemoriser && pseudo) {
-      localStorage.setItem(CLE_PSEUDO_SAUVEGARDE, pseudo);
-      return;
+  function estSuperAdminConnecte() {
+    return State.etat.accesAdmin && State.etat.estSuperAdmin;
+  }
+
+  function memoriserPseudo(pseudo, actif) {
+    try {
+      if (actif) localStorage.setItem(CLE_PSEUDO, pseudo);
+      else localStorage.removeItem(CLE_PSEUDO);
+    } catch (_erreur) {
+      Logger.avertissement("stockage_pseudo_indisponible");
     }
-
-    localStorage.removeItem(CLE_PSEUDO_SAUVEGARDE);
-  } catch (erreur) {
-    console.warn("Impossible de mettre a jour le pseudo sauvegarde.");
-  }
-}
-
-function afficherConnexion() {
-  definirModeCarte("normal");
-  const pseudoSauvegarde = lirePseudoSauvegarde();
-  const memoriserCoche = pseudoSauvegarde ? " checked" : "";
-
-  setContenu(`
-    <div class="form-zone">
-      <label for="pseudo">Pseudo World of Tanks</label>
-      <input type="text" id="pseudo" name="username" autocomplete="username" value="${escapeHTML(pseudoSauvegarde)}" placeholder="Ex : Raiju153" onkeydown="if(event.key==='Enter'){connexion();}">
-      <label class="remember-login-label" for="memoriserPseudo">
-        <input type="checkbox" id="memoriserPseudo"${memoriserCoche}>
-        <span>Se souvenir de mon pseudo</span>
-      </label>
-      <button onclick="connexion()">ACCÈS OPÉRATIONNEL</button>
-      <p id="message"></p>
-    </div>
-  `);
-}
-
-async function connexion() {
-  const pseudo = document.getElementById("pseudo").value.trim();
-  const memoriserPseudo = Boolean(document.getElementById("memoriserPseudo")?.checked);
-  const message = document.getElementById("message");
-
-  if (pseudo === "") {
-    message.textContent = "Merci de saisir un pseudo.";
-    message.style.color = "#ff5555";
-    return;
   }
 
-  message.textContent = "Connexion en cours...";
-  message.style.color = "#CFCFCF";
-
-  try {
-    const data = await identifierUtilisateurSupabase(pseudo);
-
-    if (!data.succes) {
-      message.textContent = data.message;
-      message.style.color = "#ff5555";
-      return;
-    }
-
-    utilisateurConnecte = data;
-    accesOfficierValide = false;
-    memoriserPseudoConnexion(pseudo, memoriserPseudo);
-
-    if (estOfficierConnecte() || estSuperAdminConnecte()) {
-      afficherDemandeMotDePasseOfficier();
-    } else {
-      afficherAccueilJoueur();
-    }
-
-  } catch (erreur) {
-    console.error("Connexion impossible : erreur inattendue.");
-
-    message.textContent = "Erreur lors de la connexion.";
-    message.style.color = "#ff5555";
+  function lirePseudoMemorise() {
+    try { return String(localStorage.getItem(CLE_PSEUDO) || ""); }
+    catch (_erreur) { return ""; }
   }
-}
 
+  function afficherVersionSite() {
+    const element = document.getElementById("version-site");
+    if (element) element.textContent = VERSION_SITE;
+  }
 
-function deconnexion() {
-  utilisateurConnecte = null;
-  accesOfficierValide = false;
-  motDePasseDemandesDiscord = "";
-  nbDemandesLiaisonDiscord = null;
-  viderCacheFrontend();
-  afficherConnexion();
-}
+  function titrePage(titre, sousTitre) {
+    return [
+      UI.element("h2", {}, titre),
+      sousTitre ? UI.element("p", { className: "page-subtitle" }, sousTitre) : null
+    ];
+  }
 
-function retourAccueilConnecte() {
-  if (!utilisateurConnecte) {
+  async function deconnexion() {
+    const fermetureDistante = global.apiSupabase("fermerSession", {});
+    global.MPPSession.toutEffacer();
+    State.effacer();
     afficherConnexion();
-    return;
+    try { await fermetureDistante; }
+    catch (_erreur) { Logger.avertissement("fermeture_session_distante_indisponible"); }
   }
 
-  if (estOfficierConnecte() || estSuperAdminConnecte()) {
-    afficherChoixOfficier();
-    return;
-  }
-
-  afficherAccueilJoueur();
-}
-
-function rendreBoutonDemandesDiscordAccueil() {
-  const badge = Number.isInteger(nbDemandesLiaisonDiscord)
-    ? `<span id="badgeDemandesDiscord" class="notification-badge">${nbDemandesLiaisonDiscord}</span>`
-    : `<span id="badgeDemandesDiscord" class="notification-badge" hidden></span>`;
-
-  return `
-    <button onclick="afficherDemandesLiaisonDiscord()" class="secondary-button admin-action-button">
-      <span>Demandes Discord</span>
-      ${badge}
-    </button>
-  `;
-}
-
-function mettreAJourBadgeDemandesDiscord(nombre) {
-  nbDemandesLiaisonDiscord = Number(nombre) || 0;
-
-  const badge = document.getElementById("badgeDemandesDiscord");
-  if (!badge) return;
-
-  badge.hidden = false;
-  badge.textContent = String(nbDemandesLiaisonDiscord);
-}
-
-function actualiserCompteurDemandesDiscordAccueil() {
-  if (!estSuperAdminConnecte() || !motDePasseDemandesDiscord) return;
-
-  appelAPISensible(
-    "chargerDemandesLiaisonDiscord",
-    {
-      utilisateur: utilisateurConnecte.joueur.pseudo,
-      motDePasse: motDePasseDemandesDiscord
-    },
-    function (data) {
-      if (!data.succes) return;
-      mettreAJourBadgeDemandesDiscord(filtrerDemandesLiaisonEnAttente(data.demandes || []).length);
-    }
-  );
-}
-
-function discordLieUtilisateurConnecte() {
-  const joueur = utilisateurConnecte?.joueur || {};
-  return Boolean(joueur.discordLieA || joueur.discordUsername || joueur.discordId);
-}
-
-function rendreSectionActionPrincipaleAccueil() {
-  return `
-    <section class="home-section">
-      <h3 class="home-section-title">Action principale</h3>
-      <button onclick="afficherCompetitionsJoueur()" class="home-primary-action">
-        Remplir mes présences
-      </button>
-    </section>
-  `;
-}
-
-function rendreSectionDiscordAccueil() {
-  const joueur = utilisateurConnecte?.joueur || {};
-  const discordLie = discordLieUtilisateurConnecte();
-  const discordUsername = joueur.discordUsername || "";
-  const statutTexte = discordLie ? "Discord lié" : "Discord non lié";
-  const detailTexte = discordLie && discordUsername
-    ? discordUsername
-    : "Associe ton compte Discord pour les rappels automatiques.";
-  const classeStatut = discordLie
-    ? "discord-status-text discord-status-text-linked"
-    : "discord-status-text discord-status-text-pending";
-  const actionLiaison = discordLie
-    ? ""
-    : `
-        <button onclick="afficherLiaisonDiscord()" class="secondary-button discord-link-button">
-          💬 Lier mon Discord
-        </button>
-      `;
-
-  return `
-    <section class="home-section">
-      <h3 class="home-section-title">Compte Discord</h3>
-      <div class="home-card discord-status-card">
-        <div class="home-card-body">
-          <p class="${classeStatut}">${escapeHTML(statutTexte)}</p>
-          <p class="home-card-text">${escapeHTML(detailTexte)}</p>
-        </div>
-        ${actionLiaison}
-      </div>
-    </section>
-  `;
-}
-
-function rendreSectionAdministrationAccueil() {
-  if (!estOfficierConnecte() && !estSuperAdminConnecte()) return "";
-
-  const actionDemandesDiscord = estSuperAdminConnecte()
-    ? `
-      <div class="home-card admin-action-card">
-        <div class="home-card-body">
-          <p class="home-card-title">Liaisons Discord</p>
-          <p class="home-card-text">Valider ou refuser les demandes en attente.</p>
-        </div>
-        ${rendreBoutonDemandesDiscordAccueil()}
-      </div>
-    `
-    : "";
-
-  return `
-    <section class="home-section">
-      <h3 class="home-section-title">Administration</h3>
-      <div class="home-action-grid">
-        <div class="home-card admin-action-card">
-          <div class="home-card-body">
-            <p class="home-card-title">Espace officier</p>
-            <p class="home-card-text">Consulter les présences et gérer les opérations.</p>
-          </div>
-          <button onclick="afficherEspaceOfficier()" class="secondary-button admin-action-button">
-            Ouvrir
-          </button>
-        </div>
-        ${actionDemandesDiscord}
-      </div>
-    </section>
-  `;
-}
-
-function rendreSectionCompteAccueil() {
-  const actionMotDePasse = estOfficierConnecte() || estSuperAdminConnecte()
-    ? `
-      <button onclick="afficherChangerMotDePasse()" class="secondary-button account-action-button">
-        Changer mon mot de passe
-      </button>
-    `
-    : "";
-
-  if (!actionMotDePasse) return "";
-
-  return `
-    <section class="home-section account-actions">
-      <h3 class="home-section-title">Compte / sécurité</h3>
-      ${actionMotDePasse}
-    </section>
-  `;
-}
-
-function rendreAccueilConnecteHTML() {
-  return `
-    <div class="form-zone home-screen">
-      <h2>Bonjour ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</h2>
-      ${rendreSectionActionPrincipaleAccueil()}
-      ${rendreSectionDiscordAccueil()}
-      ${rendreSectionAdministrationAccueil()}
-      ${rendreSectionCompteAccueil()}
-      <p class="small-link" onclick="deconnexion()">Déconnexion</p>
-    </div>
-  `;
-}
-
-function afficherAccueilJoueur() {
-  definirModeCarte("normal");
-  setContenu(rendreAccueilConnecteHTML());
-}
-
-function afficherChoixOfficier() {
-  definirModeCarte("normal");
-  setContenu(rendreAccueilConnecteHTML());
-
-  actualiserCompteurDemandesDiscordAccueil();
-}
-
-
-function afficherCompetitionsJoueur() {
-  definirModeCarte("normal");
-  afficherChargement("Compétitions disponibles");
-
-  chargerCompetitionsAvecCache(function (data) {
-    if (!data.succes) {
-      return afficherErreur(data.message);
-    }
-
-    let html = `<div class="form-zone"><h2>Compétitions disponibles</h2>`;
-    let nbVisibles = 0;
-
-    data.competitions.forEach(function (competition) {
-      if (!peutVoirCompetition(competition)) {
+  function afficherConnexion(message) {
+    State.etat.vue = "connexion";
+    const pseudoSauve = lirePseudoMemorise();
+    const pseudo = UI.champ({
+      id: "login-pseudo",
+      name: "username",
+      label: "Pseudo",
+      value: pseudoSauve,
+      autocomplete: "username",
+      required: true,
+      maxLength: 80
+    });
+    const code = UI.champ({
+      id: "login-access-code",
+      name: "password",
+      type: "password",
+      label: "Code d’accès",
+      autocomplete: "current-password",
+      required: true,
+      minLength: 10,
+      maxLength: 256
+    });
+    const souvenir = UI.caseACocher("remember-pseudo", "Se souvenir de mon pseudo", Boolean(pseudoSauve));
+    const erreur = UI.element("p", { className: "error", role: "alert", hidden: !message }, message || "");
+    const boutonConnexion = UI.bouton("Se connecter", null, { type: "submit" });
+    const formulaire = UI.element("form", { className: "form-zone auth-form", noValidate: true }, [
+      ...titrePage("Identification", "Accédez à vos compétitions et à vos présences."),
+      pseudo.groupe,
+      code.groupe,
+      souvenir.groupe,
+      erreur,
+      UI.actions([boutonConnexion])
+    ]);
+    formulaire.addEventListener("submit", async function (evenement) {
+      evenement.preventDefault();
+      erreur.hidden = true;
+      const pseudoValeur = pseudo.controle.value.trim();
+      let codeValeur = code?.controle.value || "";
+      if (!pseudoValeur || codeValeur.length < 10) {
+        erreur.textContent = "Saisissez votre pseudo et votre code d’accès.";
+        erreur.hidden = false;
         return;
       }
-
-      nbVisibles++;
-
-      html += `
-        <div class="competition-card">
-          <h3>${escapeHTML(competition.nom)}</h3>
-          <p>Statut : ${escapeHTML(competition.statut)}</p>
-          <p>${escapeHTML(competition.description || "")}</p>
-
-          ${
-            peutRemplirCompetition(competition)
-              ? `
-                <button onclick="ouvrirCompetition(${Number(competition.id)}, '${jsString(competition.nom)}', true)">
-                  Ouvrir
-                </button>
-              `
-              : `
-                <button onclick="ouvrirCompetition(${Number(competition.id)}, '${jsString(competition.nom)}', false)" class="secondary-button">
-                  Consulter
-                </button>
-              `
-          }
-        </div>
-      `;
-    });
-
-    if (nbVisibles === 0) {
-      html += `<p>Aucune compétition disponible.</p>`;
-    }
-
-    html += `
-      <button onclick="retourAccueilConnecte()" class="secondary-button">
-        Retour à l’accueil
-      </button>
-    `;
-
-    html += `<p class="small-link" onclick="deconnexion()">Déconnexion</p></div>`;
-    setContenu(html);
-  });
-}
-
-function chargerCompetitionsAvecCache(callback) {
-  if (cacheFrontend.competitions && estCacheValide("competitions")) {
-    callback(cacheFrontend.competitions);
-    return;
-  }
-  appelAPI("chargerCompetitions", {}, function (data) {
-    mettreEnCache("competitions", data);
-    callback(data);
-  });
-}
-
-function ouvrirCompetition(idCompetition, nomCompetition, peutModifier = true) {
-  definirModeCarte("normal");
-  afficherChargement(nomCompetition, "Chargement des dates et de tes réponses...");
-
-  const pseudo = utilisateurConnecte.joueur.pseudo;
-  const cleCache = "competitionComplete_" + idCompetition + "_" + pseudo.toLowerCase();
-
-  if (cacheFrontend.competitionComplete[cleCache] && estCacheValide(cleCache)) {
-    const dataCache = cacheFrontend.competitionComplete[cleCache];
-    afficherFormulairePresences(
-      idCompetition,
-      nomCompetition,
-      dataCache.dates,
-      dataCache.presences,
-      peutModifier && dataCache.peutRemplir !== false
-    );
-    return;
-  }
-
-  appelAPI("chargerCompetitionComplete", { idCompetition, pseudo }, function (data) {
-    if (!data.succes) {
-      return afficherErreur(data.message);
-    }
-
-    cacheFrontend.competitionComplete[cleCache] = data;
-    cacheFrontend.timestamp[cleCache] = Date.now();
-
-    afficherFormulairePresences(
-      idCompetition,
-      nomCompetition,
-      data.dates,
-      data.presences,
-      peutModifier && data.peutRemplir !== false
-    );
-  });
-}
-
-
-
-function afficherFormulairePresences(idCompetition, nomCompetition, dates, presencesExistantes, peutModifier = true) {
-  definirModeCarte("normal");
-
-  let html = `
-    <div class="form-zone">
-      <h2>${escapeHTML(nomCompetition)}</h2>
-      <p>Pseudo : ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</p>
-  `;
-
-  if (!peutModifier) {
-    html += `
-      <div class="recap-box">
-        <p>Consultation uniquement : cette compétition n'est pas ouverte à la modification.</p>
-      </div>
-    `;
-  }
-
-  if (dates.length === 0) {
-    html += `<p>Aucune date définie pour cette compétition.</p>`;
-  }
-
-  presencesInitialesSession = creerIndexPresencesInitiales(dates, presencesExistantes);
-
-  const indexPresences = {};
-  presencesExistantes.forEach(function (presence) {
-    indexPresences[String(presence.dateCompetition).trim()] = presence;
-  });
-
-  dates.forEach(function (date) {
-    const dateTexte = String(date.dateCompetition).trim();
-    const presence = indexPresences[dateTexte] || {};
-    const statutActuel = statutPresenceLisible(presence.statut);
-    const horairesActuels = horairesPresenceUtiles(statutActuel, presence.horairesDisponibles)
-      .split(",")
-      .map(h => h.trim())
-      .filter(Boolean);
-    const horaires = String(date.horaires || "")
-      .split(",")
-      .map(h => h.trim())
-      .filter(Boolean);
-
-    const disabled = peutModifier ? "" : "disabled";
-
-    html += `
-      <div class="date-card">
-        <h3>${escapeHTML(date.dateAffichage || dateTexte)}</h3>
-
-        <select class="select-statut" data-date="${escapeHTML(dateTexte)}" onchange="gererAffichageHoraires(this)" ${disabled}>
-          <option value="Non renseigné" ${statutActuel === "Non renseigné" ? "selected" : ""}>⚪ Non renseigné</option>
-          <option value="Présent" ${statutActuel === "Présent" ? "selected" : ""}>🟢 Présent</option>
-          <option value="Absent" ${statutActuel === "Absent" ? "selected" : ""}>🔴 Absent</option>
-          <option value="Remplaçant" ${statutActuel === "Remplaçant" ? "selected" : ""}>🔵 Remplaçant</option>
-        </select>
-
-        <div class="horaires-zone" style="${statutActuel === "Présent" || statutActuel === "Remplaçant" ? "" : "display:none;"}">
-          <p>Créneaux disponibles :</p>
-          <div class="horaires-selection">
-    `;
-
-    if (horaires.length === 0) {
-      html += `<p>Aucun horaire défini pour cette date.</p>`;
-    }
-
-    horaires.forEach(function (horaire) {
-      html += `
-        <label class="checkbox-role">
-          <input type="checkbox" class="horaire-checkbox" value="${escapeHTML(horaire)}" ${horairesActuels.includes(horaire) ? "checked" : ""} ${disabled}>
-          ${escapeHTML(horaire)}
-        </label>
-      `;
-    });
-
-    html += `
-          </div>
-        </div>
-      </div>
-    `;
-  });
-
-  if (peutModifier) {
-    html += `
-      <button onclick="afficherRecapitulatif(${idCompetition}, '${jsString(nomCompetition)}')">
-        Vérifier mes réponses
-      </button>
-    `;
-  }
-
-  html += `
-      <button onclick="afficherCompetitionsJoueur()" class="secondary-button">
-        Retour
-      </button>
-    </div>
-  `;
-
-  setContenu(html);
-}
-
-
-
-function gererAffichageHoraires(selectElement) {
-  const dateCard = selectElement.closest(".date-card");
-  const horairesZone = dateCard.querySelector(".horaires-zone");
-  if (!horairesZone) return;
-  if (selectElement.value === "Présent" || selectElement.value === "Remplaçant") {
-	horairesZone.style.display = "";
-  }
-  else {
-    horairesZone.style.display = "none";
-    horairesZone.querySelectorAll(".horaire-checkbox").forEach(c => c.checked = false);
-  }
-}
-
-function afficherRecapitulatif(idCompetition, nomCompetition) {
-  const selects = document.querySelectorAll(".select-statut");
-  const presences = [];
-
-  selects.forEach(function (select) {
-    const dateCard = select.closest(".date-card");
-    const dateCompetition = select.dataset.date;
-    const statut = statutPresenceLisible(select.value);
-    let horairesDisponibles = [];
-    if (statut === "Présent" || statut === "Remplaçant") {
-      dateCard.querySelectorAll(".horaire-checkbox").forEach(function (caseHoraire) {
-        if (caseHoraire.checked) horairesDisponibles.push(caseHoraire.value);
+      boutonConnexion.disabled = true;
+      UI.statut("Identification en cours…", "info");
+      const resultat = await appelAPISensible("identifierUtilisateur", {
+        pseudo: pseudoValeur,
+        codeAcces: codeValeur
       });
-    }
-    presences.push({
-      dateCompetition,
-      statut,
-      horairesDisponibles: normaliserHorairesComparaison(horairesDisponibles.join(","))
-    });
-  });
-
-  const changements = comparerPresencesSession(presences);
-
-  let html = `
-    <div class="form-zone">
-      <h2>Vérification</h2>
-      <p>${escapeHTML(nomCompetition)}</p>
-      <div class="recap-box">
-        ${rendreChangementsPresences(changements)}
-      </div>
-  `;
-
-  if (changements.length > 0) {
-    html += `
-      <button onclick='confirmerPresences(${idCompetition}, ${jsonPourAttribut(JSON.stringify(presences))})'>
-        Confirmer
-      </button>
-    `;
-  }
-
-  html += `
-      <button onclick="ouvrirCompetition(${idCompetition}, '${jsString(nomCompetition)}', true)" class="secondary-button">
-        Modifier
-      </button>
-    </div>
-  `;
-
-  setContenu(html);
-}
-
-function confirmerPresences(idCompetition, presencesJSON) {
-  const presences = JSON.parse(presencesJSON);
-  const changements = comparerPresencesSession(presences);
-
-  if (changements.length === 0) {
-    setContenu(`
-      <div class="form-zone">
-        <h2>Aucune modification détectée</h2>
-        <p>Aucune sauvegarde n'a été effectuée.</p>
-        <button onclick="afficherCompetitionsJoueur()">Retour aux compétitions</button>
-      </div>
-    `);
-    return;
-  }
-
-  const pseudo = utilisateurConnecte.joueur.pseudo;
-  afficherChargement("Sauvegarde en cours...", "Merci de patienter.");
-  appelAPI("sauvegarderPresences", { idCompetition, pseudo, presences: JSON.stringify(presences) }, function (data) {
-    if (!data.succes) return afficherErreur(data.message, `<button onclick="ouvrirCompetition(${idCompetition}, 'Compétition', true)">Retour</button>`);
-    viderCacheFrontend();
-    setContenu(`<div class="form-zone"><h2>Disponibilités enregistrées ✅</h2><p>${escapeHTML(data.message)}</p><p>Ajouts : ${data.ajouts}</p><p>Modifications : ${data.modifications}</p><button onclick="afficherCompetitionsJoueur()">Retour aux compétitions</button></div>`);
-  });
-}
-
-function verifierAccesOfficier() {
-  const message = document.getElementById("message");
-  const champMotDePasse = document.getElementById("mdpOfficier");
-  const motDePasse = champMotDePasse ? champMotDePasse.value : "";
-
-  if (!estOfficierConnecte() && !estSuperAdminConnecte()) {
-    afficherMessageModal(
-      "Accès refusé",
-      "Ton compte n'a pas le rôle Officier."
-    );
-    return;
-  }
-
-  if (!motDePasse) {
-    if (message) {
-      message.textContent = "Merci de saisir le mot de passe.";
-      message.style.color = "#ff5555";
-    }
-    return;
-  }
-
-  if (message) {
-    message.textContent = "Vérification du mot de passe...";
-    message.style.color = "#CFCFCF";
-  }
-
-  verifierMotDePasseSupabase(
-    utilisateurConnecte.joueur.pseudo,
-    motDePasse
-  )
-    .then(function (data) {
-      if (!data.succes) {
-        if (message) {
-          message.textContent = data.message;
-          message.style.color = "#ff5555";
-        }
+      codeValeur = "";
+      if (code) code.controle.value = "";
+      boutonConnexion.disabled = false;
+      UI.effacerStatut();
+      if (!estSucces(resultat)) {
+        erreur.textContent = resultat.message || "Identification impossible.";
+        erreur.hidden = false;
+        code.controle.focus();
         return;
       }
-
-      accesOfficierValide = true;
-      if (estSuperAdminConnecte()) {
-        motDePasseDemandesDiscord = motDePasse;
-      }
-      afficherChoixOfficier();
-    })
-    .catch(function () {
-      if (message) {
-        message.textContent = "Impossible de vérifier le mot de passe.";
-        message.style.color = "#ff5555";
-      }
-
-      console.error("Vérification du mot de passe impossible : erreur inattendue.");
+      memoriserPseudo(pseudoValeur, souvenir.controle.checked);
+      State.definirUtilisateur(resultat);
+      afficherAccueilConnecte();
     });
-}
-
-function afficherEspaceOfficier() {
-  definirModeCarte("large");
-
-  if (!accesOfficierValide) {
-    afficherDemandeMotDePasseOfficier();
-    return;
+    UI.afficher(formulaire, { focus: pseudo.controle });
   }
 
-  if (
-    cacheFrontend.donneesOfficierInitiales &&
-    estCacheValide("donneesOfficierInitiales")
-  ) {
-    console.log("📦 Tableau de bord chargé depuis le cache");
-    construireTableauDeBordOfficier(cacheFrontend.donneesOfficierInitiales);
-    return;
-  }
-
-  afficherChargement("Tableau de bord officier");
-
-  appelAPI(
-    "chargerDonneesOfficierInitiales",
-    {},
-    function (data) {
-      if (!data.succes) {
-        afficherMessageModal(
-          "Erreur",
-          data.message || "Impossible de charger le tableau de bord."
-        );
-        return;
-      }
-
-      mettreEnCache("donneesOfficierInitiales", data);
-      construireTableauDeBordOfficier(data);
+  async function restaurerSession() {
+    if (!global.MPPSession.lireSessionJoueur()) return false;
+    const resultat = await appelAPI("restaurerSession");
+    if (!estSucces(resultat)) {
+      global.MPPSession.toutEffacer();
+      return false;
     }
-  );
-}
-
-function construireTableauDeBordOfficier(data) {
-  definirModeCarte("large");
-
-  const boutonsSuperAdmin = estSuperAdminConnecte()
-    ? `
-        <button class="secondary-button" onclick="afficherGestionJoueurs()">
-          👥 Gérer les joueurs
-        </button>
-
-        <button class="secondary-button" onclick="afficherJournalActivite()">
-          📜 Journal d'activité
-        </button>
-      `
-    : "";
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>Tableau de bord officier</h2>
-
-      <p>
-        Connecté en tant que :
-        ${escapeHTML(utilisateurConnecte.joueur.pseudo)}
-      </p>
-
-      <div class="dashboard-grid">
-        <div class="dashboard-card">
-          <h3>👥 Joueurs</h3>
-          <p>Total : ${data.joueurs.total}</p>
-          <p>🟢 Actifs : ${data.joueurs.actifs}</p>
-          <p>⚪ Inactifs : ${data.joueurs.inactifs}</p>
-          <p>🔴 Suspendus : ${data.joueurs.suspendus}</p>
-        </div>
-
-        <div class="dashboard-card">
-          <h3>📡 Activité</h3>
-          <p>Connectés ≤ 7 jours : ${data.joueurs.connectes7Jours}</p>
-          <p>Connectés ≤ 30 jours : ${data.joueurs.connectes30Jours}</p>
-          <p>Inactifs > 30 jours : ${data.joueurs.inactifs30Jours}</p>
-          <p>Jamais connectés : ${data.joueurs.jamaisConnectes}</p>
-        </div>
-
-        <div class="dashboard-card">
-          <h3>🏆 Compétitions</h3>
-          <p>🟢 Ouvertes : ${data.competitions.ouvertes}</p>
-          <p>🟠 Brouillons : ${data.competitions.brouillon}</p>
-          <p>🔒 Fermées : ${data.competitions.fermees}</p>
-          <p>📦 Archivées : ${data.competitions.archivees}</p>
-        </div>
-      </div>
-
-      <div class="table-actions">
-        <button onclick="afficherAujourdHuiOfficier()">
-          📅 Présences du jour
-        </button>
-
-        <button onclick="afficherSelectionCompetitionOfficier()">
-          👥 Consulter les présences
-        </button>
-
-        <button class="secondary-button" onclick="afficherGestionCompetitions()">
-          📅 Gérer les compétitions
-        </button>
-
-        ${boutonsSuperAdmin}
-      </div>
-
-      <button onclick="afficherChoixOfficier()" class="secondary-button">
-        Retour
-      </button>
-    </div>
-  `);
-}
-
-function formaterStatutRappelAujourdHui(rappel) {
-  const rappelInfo = rappel || {};
-  const statut = String(rappelInfo.statutJour || "").trim();
-  const heure = rappelInfo.heureProgrammee || "";
-  const libelles = {
-    desactive: {
-      classe: "today-reminder-disabled",
-      texte: "Désactivé"
-    },
-    pas_encore_envoye: {
-      classe: "today-reminder-pending",
-      texte: "En attente de l'heure programmée"
-    },
-    envoye: {
-      classe: "today-reminder-sent",
-      texte: "Rappel envoyé"
-    },
-    aucun_joueur: {
-      classe: "today-reminder-clear",
-      texte: "Aucun joueur à relancer"
-    },
-    erreur: {
-      classe: "today-reminder-error",
-      texte: "Erreur d’envoi"
-    },
-    en_cours: {
-      classe: "today-reminder-pending",
-      texte: "En cours"
-    },
-    indisponible: {
-      classe: "today-reminder-pending",
-      texte: "En attente de l'heure programmée"
-    }
-  };
-  const etat = libelles[statut] || libelles.pas_encore_envoye;
-  const activation = rappelInfo.actif
-    ? "Activé" + (heure ? " à " + heure : "")
-    : "Désactivé";
-  const textePrincipal = rappelInfo.actif
-    ? activation + " — " + etat.texte
-    : etat.texte;
-  const details = [];
-
-  if (rappelInfo.envoyeA) {
-    details.push("Dernier envoi : " + formaterDateHeureFrance(rappelInfo.envoyeA));
-  }
-
-  if (statut === "erreur") {
-    details.push("Une erreur a été enregistrée pour le rappel du jour.");
-  }
-
-  return `
-    <div class="today-reminder-status ${etat.classe}">
-      <span>Rappel Discord</span>
-      <strong>${escapeHTML(textePrincipal)}</strong>
-      ${details.length > 0 ? `<small>${escapeHTML(details.join(" | "))}</small>` : ""}
-    </div>
-  `;
-}
-
-function rendreEffectifHoraireAujourdHui(effectifParHoraire) {
-  const lignes = effectifParHoraire || [];
-
-  if (lignes.length === 0) {
-    return `<p class="today-muted">Aucun horaire défini pour aujourd'hui.</p>`;
-  }
-
-  let html = `
-    <div class="table-container">
-      <table class="presence-table today-hour-table">
-        <thead>
-          <tr>
-            <th>Horaire</th>
-            <th>Présents</th>
-            <th>Remplaçants</th>
-            <th>Absents</th>
-            <th>Sans réponse</th>
-          </tr>
-        </thead>
-        <tbody>
-  `;
-
-  lignes.forEach(function (ligne) {
-    html += `
-      <tr>
-        <td>${escapeHTML(ligne.horaire)}</td>
-        <td>${Number(ligne.presents || 0)}</td>
-        <td>${Number(ligne.remplacants || 0)}</td>
-        <td>${Number(ligne.absents || 0)}</td>
-        <td>${Number(ligne.sansReponse || 0)}</td>
-      </tr>
-    `;
-  });
-
-  html += `
-        </tbody>
-      </table>
-    </div>
-  `;
-
-  return html;
-}
-
-function rendreListeSansReponseAujourdHui(competition) {
-  const sansReponse = competition?.joueursSansReponse || {};
-  const avecDiscord = sansReponse.avecDiscord || [];
-  const sansDiscord = sansReponse.sansDiscord || [];
-  const total = Number(sansReponse.total || 0);
-
-  if (total === 0) {
-    return `
-      <div class="today-missing-list">
-        <p class="today-muted">Tous les joueurs actifs concernés ont répondu.</p>
-      </div>
-    `;
-  }
-
-  let html = `<div class="today-missing-list">`;
-
-  if (avecDiscord.length > 0) {
-    html += `
-      <h4>Discord lié</h4>
-      <ul>
-    `;
-
-    avecDiscord.forEach(function (joueur) {
-      const discord = joueur.discordUsername
-        ? ` <span>${escapeHTML(joueur.discordUsername)}</span>`
-        : "";
-      html += `<li><strong>${escapeHTML(joueur.pseudo)}</strong>${discord}</li>`;
-    });
-
-    html += `</ul>`;
-  }
-
-  if (sansDiscord.length > 0) {
-    html += `
-      <h4>Discord non lié</h4>
-      <ul>
-    `;
-
-    sansDiscord.forEach(function (joueur) {
-      html += `<li><strong>${escapeHTML(joueur.pseudo)}</strong></li>`;
-    });
-
-    html += `</ul>`;
-  }
-
-  html += `</div>`;
-  return html;
-}
-
-function afficherAujourdHuiOfficier() {
-  definirModeCarte("large");
-
-  if (!accesOfficierValide) {
-    afficherDemandeMotDePasseOfficier();
-    return;
-  }
-
-  afficherChargement("Présences du jour", "Chargement de la situation du jour...");
-
-  appelAPI(
-    "chargerAujourdHuiOfficier",
-    {
-      utilisateur: utilisateurConnecte.joueur.pseudo
-    },
-    function (data) {
-      if (!data.succes) {
-        return afficherErreur(
-          data.message || "Impossible de charger la page Présences du jour.",
-          `<button onclick="afficherEspaceOfficier()" class="secondary-button">Retour</button>`
-        );
-      }
-
-      construirePageAujourdHuiOfficier(data);
-    }
-  );
-}
-
-function construirePageAujourdHuiOfficier(data) {
-  definirModeCarte("large");
-  donneesAujourdHuiOfficier = data;
-
-  const competitions = data.competitions || [];
-  const resume = data.resume || {};
-
-  let html = `
-    <div class="form-zone today-page">
-      <h2>📅 Présences du jour</h2>
-      <p class="table-subtitle">${escapeHTML(data.dateAffichage || "")}</p>
-  `;
-
-  if (competitions.length === 0) {
-    html += `
-      <div class="today-card">
-        <p>Aucune compétition prévue aujourd'hui.</p>
-      </div>
-
-      <button onclick="afficherEspaceOfficier()" class="secondary-button">
-        Retour
-      </button>
-    </div>
-    `;
-
-    setContenu(html);
-    return;
-  }
-
-  html += `
-    <div class="today-summary">
-      <div>
-        <span>Compétitions</span>
-        <strong>${Number(resume.competitions || competitions.length)}</strong>
-      </div>
-      <div>
-        <span>Présents</span>
-        <strong>${Number(resume.presents || 0)}</strong>
-      </div>
-      <div>
-        <span>Remplaçants</span>
-        <strong>${Number(resume.remplacants || 0)}</strong>
-      </div>
-      <div>
-        <span>Absents</span>
-        <strong>${Number(resume.absents || 0)}</strong>
-      </div>
-      <div>
-        <span>Sans réponse</span>
-        <strong>${Number(resume.sansReponse || 0)}</strong>
-      </div>
-    </div>
-  `;
-
-  competitions.forEach(function (competition) {
-    const stats = competition.stats || {};
-    const nomCompetition = competition.nom || "Compétition";
-
-    html += `
-      <section class="today-competition-card">
-        <div class="competition-card-header">
-          <h3>${escapeHTML(nomCompetition)}</h3>
-          <div class="competition-status-line">
-            ${badgeStatutCompetitionHTML(competition.statut)}
-          </div>
-        </div>
-
-        <p class="table-subtitle">${escapeHTML(competition.date?.dateAffichage || data.dateAffichage || "")}</p>
-
-        ${formaterStatutRappelAujourdHui(competition.rappel)}
-
-        <div class="today-card">
-          <h4>Effectif du jour</h4>
-          <div class="today-summary today-summary-compact">
-            <div>
-              <span>Présents</span>
-              <strong>${Number(stats.presents || 0)}</strong>
-            </div>
-            <div>
-              <span>Remplaçants</span>
-              <strong>${Number(stats.remplacants || 0)}</strong>
-            </div>
-            <div>
-              <span>Absents</span>
-              <strong>${Number(stats.absents || 0)}</strong>
-            </div>
-            <div>
-              <span>Sans réponse</span>
-              <strong>${Number(stats.sansReponse || 0)}</strong>
-            </div>
-          </div>
-
-          ${rendreEffectifHoraireAujourdHui(competition.effectifParHoraire)}
-        </div>
-
-        <div class="today-card">
-          <h4>Joueurs sans réponse aujourd'hui</h4>
-          ${rendreListeSansReponseAujourdHui(competition)}
-        </div>
-
-        <div class="today-actions">
-          <button onclick="afficherTableauPresencesOfficier(${Number(competition.id)}, '${jsString(nomCompetition)}')">
-            👥 Consulter les présences
-          </button>
-
-          <button onclick="afficherSansReponseAujourdHui(${Number(competition.id)})" class="secondary-button">
-            Voir les sans réponse
-          </button>
-        </div>
-      </section>
-    `;
-  });
-
-  html += `
-      <button onclick="afficherEspaceOfficier()" class="secondary-button">
-        Retour
-      </button>
-    </div>
-  `;
-
-  setContenu(html);
-}
-
-function afficherSansReponseAujourdHui(idCompetition) {
-  const data = donneesAujourdHuiOfficier;
-  const competition = (data?.competitions || []).find(function (item) {
-    return Number(item.id) === Number(idCompetition);
-  });
-
-  if (!competition) {
-    afficherAujourdHuiOfficier();
-    return;
-  }
-
-  const sansReponse = competition.joueursSansReponse || {};
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>Joueurs sans réponse aujourd'hui</h2>
-      <p>Compétition : ${escapeHTML(competition.nom || "Compétition")}</p>
-      <p>Total : ${Number(sansReponse.total || 0)}</p>
-
-      ${rendreListeSansReponseAujourdHui(competition)}
-
-      <div class="today-actions">
-        <button onclick="afficherTableauPresencesOfficier(${Number(competition.id)}, '${jsString(competition.nom || "Compétition")}')">
-          👥 Consulter les présences
-        </button>
-
-        <button onclick="construirePageAujourdHuiOfficier(donneesAujourdHuiOfficier)" class="secondary-button">
-          Retour
-        </button>
-      </div>
-    </div>
-  `);
-}
-
-function afficherSelectionCompetitionOfficier() {
-  definirModeCarte("large");
-  afficherChargement("Choisir une compétition", "Chargement des compétitions...");
-
-  chargerCompetitionsAvecCache(function (data) {
-    if (!data.succes) {
-      return afficherErreur(data.message, `<button onclick="afficherEspaceOfficier()">Retour</button>`);
-    }
-
-    let html = `<div class="form-zone"><h2>Choisir une compétition</h2>`;
-    let nbVisibles = 0;
-
-    data.competitions.forEach(function (competition) {
-      if (!peutVoirCompetition(competition)) {
-        return;
-      }
-
-      nbVisibles++;
-      const descriptionCompetition = competition.description
-        ? `<p class="competition-description">${escapeHTML(competition.description)}</p>`
-        : "";
-
-      html += `
-        <div class="competition-card">
-          <div class="competition-card-header">
-            <h3>${escapeHTML(competition.nom)}</h3>
-            <div class="competition-status-line">
-              ${badgeStatutCompetitionHTML(competition.statut)}
-            </div>
-          </div>
-          ${descriptionCompetition}
-          <button onclick="afficherTableauPresencesOfficier(${Number(competition.id)}, '${jsString(competition.nom)}')">
-            Voir les présences
-          </button>
-        </div>
-      `;
-    });
-
-    if (nbVisibles === 0) {
-      html += `<p>Aucune compétition visible.</p>`;
-    }
-
-    html += `<button onclick="afficherEspaceOfficier()" class="secondary-button">Retour</button></div>`;
-    setContenu(html);
-  });
-}
-
-
-
-function afficherTableauPresencesOfficier(idCompetition, nomCompetition) {
-  definirModeCarte("large");
-  afficherChargement(nomCompetition, "Chargement du tableau...");
-
-  appelAPI(
-    "genererTableauPresences",
-    {
-      idCompetition,
-      utilisateur: utilisateurConnecte.joueur.pseudo
-    },
-    function (data) {
-      if (!data.succes) {
-        return afficherErreur(data.message);
-      }
-
-      construireTableauPresencesOfficier(
-        idCompetition,
-        nomCompetition,
-        data
-      );
-    }
-  );
-}
-
-function construireTableauPresencesOfficier(idCompetition, nomCompetition, data) {
-  function convertirDateFRVersDate(dateTexte) {
-    const texte = String(dateTexte || "").trim();
-
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(texte)) {
-      const morceaux = texte.split("/");
-      return new Date(
-        Number(morceaux[2]),
-        Number(morceaux[1]) - 1,
-        Number(morceaux[0])
-      );
-    }
-
-    if (/^\d{4}-\d{2}-\d{2}$/.test(texte)) {
-      const morceaux = texte.split("-");
-      return new Date(
-        Number(morceaux[0]),
-        Number(morceaux[1]) - 1,
-        Number(morceaux[2])
-      );
-    }
-
-    return new Date(texte);
-  }
-
-  const aujourdHui = new Date();
-  aujourdHui.setHours(0, 0, 0, 0);
-
-  const dateLimiteEffectifHoraire = new Date(aujourdHui);
-  dateLimiteEffectifHoraire.setDate(dateLimiteEffectifHoraire.getDate() + 3);
-
-  const datesVisibles = data.dates.filter(function (dateInfo) {
-    const dateCompetition = convertirDateFRVersDate(dateInfo.dateCompetition);
-    dateCompetition.setHours(0, 0, 0, 0);
-
-    return dateCompetition >= aujourdHui;
-  });
-
-  const lignesVisibles = data.lignes.map(function (ligne) {
-    return {
-      ...ligne,
-      disponibilites: ligne.disponibilites.filter(function (dispo) {
-        return datesVisibles.some(function (dateInfo) {
-          return dateInfo.dateCompetition === dispo.dateCompetition;
-        });
-      })
-    };
-  });
-
-  const stats = calculerStatistiquesTableau(lignesVisibles);
-  const statsParDate = calculerStatistiquesParDate(datesVisibles, lignesVisibles);
-  const effectifParHoraire = calculerEffectifParHoraire(datesVisibles, lignesVisibles);
-
-  const afficherEffectifParHoraire = datesVisibles.some(function (date) {
-    return String(date.horaires || "")
-      .split(",")
-      .map(h => h.trim())
-      .filter(Boolean).length > 1;
-  });
-
-  const nbDatesFuturesLointaines = effectifParHoraire.filter(function (dateInfo) {
-    const dateCompetition = convertirDateFRVersDate(dateInfo.dateCompetition);
-    dateCompetition.setHours(0, 0, 0, 0);
-
-    return dateCompetition > dateLimiteEffectifHoraire;
-  }).length;
-
-  const nbDatesFuturesLointainesEffectifDate = statsParDate.filter(function (dateInfo) {
-    const dateCompetition = convertirDateFRVersDate(dateInfo.dateCompetition);
-    dateCompetition.setHours(0, 0, 0, 0);
-
-    return dateCompetition > dateLimiteEffectifHoraire;
-  }).length;
-
-  let html = `
-    <div class="form-zone">
-      <h2>Visualisation des présences</h2>
-      <p class="table-subtitle">${escapeHTML(nomCompetition || "Compétition")}</p>
-
-      <div class="stats-box">
-        <h3>Statistiques générales</h3>
-        <p>🟢 Présents : ${stats.presents}</p>
-        <p>🔵 Remplaçants : ${stats.remplacants}</p>
-        <p>🔴 Absents : ${stats.absents}</p>
-        <p>⚪ Non renseignés : ${stats.nonRenseignes}</p>
-        <p><strong>Taux de réponse : ${stats.tauxReponse}%</strong></p>
-      </div>
-  `;
-
-  if (afficherEffectifParHoraire) {
-    html += `
-      <div class="stats-box">
-        <h3>📊 Effectif par horaire</h3>
-    `;
-
-    effectifParHoraire.forEach(function (dateInfo) {
-      const dateCompetition = convertirDateFRVersDate(dateInfo.dateCompetition);
-      dateCompetition.setHours(0, 0, 0, 0);
-
-      const estDateLointaine = dateCompetition > dateLimiteEffectifHoraire;
-
-      html += `
-        <div
-          class="horaire-date-block ${estDateLointaine ? "effectif-horaire-lointain" : ""}"
-          style="${estDateLointaine ? "display:none;" : ""}"
-        >
-          <h4>${escapeHTML(dateInfo.dateAffichage)}</h4>
-          <div class="table-container">
-            <table class="presence-table horaire-table">
-              <thead>
-                <tr>
-                  <th>Horaire</th>
-                  <th>🟢 Présents</th>
-                  <th>🔵 Remplaçants</th>
-                  <th>🔴 Absents</th>
-                  <th>⚪ Sans réponse</th>
-                </tr>
-              </thead>
-              <tbody>
-      `;
-
-      if (dateInfo.horaires.length === 0) {
-        html += `<tr><td colspan="5">Aucun horaire défini pour cette date.</td></tr>`;
-      }
-
-      dateInfo.horaires.forEach(function (h) {
-        html += `
-          <tr>
-            <td>${escapeHTML(h.horaire)}</td>
-            <td>${h.presents}</td>
-            <td>${h.remplacants}</td>
-            <td>${h.absents}</td>
-            <td>${h.nonRenseignes}</td>
-          </tr>
-        `;
-      });
-
-      html += `
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `;
-    });
-
-    if (nbDatesFuturesLointaines > 0) {
-      html += `
-        <button
-          id="boutonAfficherAutresDatesEffectifHoraire"
-          onclick="afficherAutresDatesEffectifHoraire()"
-          class="secondary-button"
-        >
-          Afficher les autres dates (${nbDatesFuturesLointaines})
-        </button>
-      `;
-    }
-
-    html += `</div>`;
-  }
-
-  html += `
-    <div class="stats-box">
-      <h3>Effectif par date</h3>
-
-      <div class="table-container">
-        <table class="presence-table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>🟢 Présents</th>
-              <th>🔵 Remplaçants</th>
-              <th>🔴 Absents</th>
-              <th>⚪ Sans réponse</th>
-            </tr>
-          </thead>
-          <tbody>
-  `;
-
-  statsParDate.forEach(function (s) {
-    const dateCompetition = convertirDateFRVersDate(s.dateCompetition);
-    dateCompetition.setHours(0, 0, 0, 0);
-
-    const estDateLointaine = dateCompetition > dateLimiteEffectifHoraire;
-
-    html += `
-      <tr
-        class="${estDateLointaine ? "effectif-date-lointain" : ""}"
-        style="${estDateLointaine ? "display:none;" : ""}"
-      >
-        <td>${escapeHTML(s.dateAffichage)}</td>
-        <td>${s.presents}</td>
-        <td>${s.remplacants}</td>
-        <td>${s.absents}</td>
-        <td>${s.nonRenseignes}</td>
-      </tr>
-    `;
-  });
-
-  html += `
-          </tbody>
-        </table>
-      </div>
-  `;
-
-  if (nbDatesFuturesLointainesEffectifDate > 0) {
-    html += `
-      <button
-        id="boutonAfficherAutresDatesEffectifDate"
-        onclick="afficherAutresDatesEffectifDate()"
-        class="secondary-button"
-      >
-        Afficher les autres dates (${nbDatesFuturesLointainesEffectifDate})
-      </button>
-    `;
-  }
-
-  html += `
-    </div>
-
-    <div class="table-container">
-      <table class="presence-table">
-        <thead>
-          <tr>
-            <th>Joueur</th>
-  `;
-
-  datesVisibles.forEach(function (date) {
-    html += `
-      <th class="date-header" title="${escapeHTML(date.dateCompetition)}">
-        <div class="date-jour">${escapeHTML(date.jourCourt || "")}</div>
-        <div class="date-numero">${escapeHTML(date.jourNumero || date.dateCompetition)}</div>
-        <div class="date-mois">${escapeHTML(date.moisCourt || "")}</div>
-      </th>
-    `;
-  });
-
-  html += `
-            <th>Synthèse</th>
-          </tr>
-        </thead>
-        <tbody>
-  `;
-
-  lignesVisibles.forEach(function (ligne) {
-    html += `<tr><td>${escapeHTML(ligne.pseudo)}</td>`;
-
-    ligne.disponibilites.forEach(function (dispo) {
-      html += `
-        <td onclick='afficherDetailPresence(${jsonPourAttribut(JSON.stringify(ligne.pseudo))}, ${jsonPourAttribut(JSON.stringify(dispo))})'>
-          ${formaterAffichagePresence(dispo)}
-        </td>
-      `;
-    });
-
-    html += `<td>${escapeHTML(ligne.synthese)}</td></tr>`;
-  });
-
-  html += `
-        </tbody>
-      </table>
-    </div>
-
-    <div class="table-actions">
-      <button onclick="afficherAujourdHuiOfficier()">
-        📅 Présences du jour
-      </button>
-
-      <button onclick="chargerSansReponse(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">
-        Voir les sans réponse
-      </button>
-
-      <button onclick="afficherSelectionCompetitionOfficier()" class="secondary-button">
-        Retour
-      </button>
-    </div>
-  </div>
-  `;
-
-  setContenu(html);
-}
-
-function afficherAutresDatesEffectifHoraire() {
-  const blocs = document.querySelectorAll(".effectif-horaire-lointain");
-  const bouton = document.getElementById("boutonAfficherAutresDatesEffectifHoraire");
-
-  let auMoinsUnBlocMasque = false;
-
-  blocs.forEach(function (bloc) {
-    if (bloc.style.display === "none") {
-      auMoinsUnBlocMasque = true;
-    }
-  });
-
-  blocs.forEach(function (bloc) {
-    bloc.style.display = auMoinsUnBlocMasque ? "" : "none";
-  });
-
-  if (bouton) {
-    bouton.textContent = auMoinsUnBlocMasque
-      ? "Masquer les autres dates"
-      : "Afficher les autres dates (" + blocs.length + ")";
-  }
-}
-
-function afficherAutresDatesEffectifDate() {
-
-  const lignes =
-    document.querySelectorAll(".effectif-date-lointain");
-
-  const bouton =
-    document.getElementById(
-      "boutonAfficherAutresDatesEffectifDate"
-    );
-
-  let auMoinsUneLigneMasquee = false;
-
-  lignes.forEach(function (ligne) {
-    if (ligne.style.display === "none") {
-      auMoinsUneLigneMasquee = true;
-    }
-  });
-
-  lignes.forEach(function (ligne) {
-    ligne.style.display =
-      auMoinsUneLigneMasquee ? "" : "none";
-  });
-
-  if (bouton) {
-    bouton.textContent =
-      auMoinsUneLigneMasquee
-        ? "Masquer les autres dates"
-        : "Afficher les autres dates (" +
-          lignes.length +
-          ")";
-  }
-}
-
-function afficherGestionCompetitions() {
-  definirModeCarte("large");
-  afficherChargement("Gestion des compétitions");
-
-  chargerCompetitionsAvecCache(function (data) {
-    if (!data.succes) {
-      return afficherErreur(
-        data.message,
-        `<button onclick="afficherEspaceOfficier()">Retour</button>`
-      );
-    }
-
-    let html = `
-      <div class="form-zone">
-        <h2>Gestion des compétitions</h2>
-
-        <button onclick="afficherFormulaireCreationCompetition()">
-          ➕ Créer une compétition
-        </button>
-    `;
-
-    data.competitions.forEach(function (competition) {
-      if (!peutVoirCompetition(competition)) {
-        return;
-      }
-
-      const statut = normaliserStatutCompetitionFrontend(competition.statut);
-
-      html += `
-        <div class="competition-card">
-          <h3>${escapeHTML(competition.nom)}</h3>
-
-          <p>Statut : ${escapeHTML(competition.statut)}</p>
-          <p>Rôles autorisés : ${escapeHTML(competition.rolesAutorises || "Tous")}</p>
-          <p>${escapeHTML(competition.description || "")}</p>
-
-          <button
-            onclick='afficherFormulaireModificationCompetition(${jsonPourAttribut(JSON.stringify(competition))})'
-            class="secondary-button">
-            ✏️ Modifier
-          </button>
-      `;
-
-      if (statut !== "archivee" && peutModifierCompetition(competition)) {
-        html += `
-          <button
-            onclick="afficherGestionDatesCompetition(${Number(competition.id)}, '${jsString(competition.nom)}')"
-            class="secondary-button">
-            📅 Gérer les dates
-          </button>
-        `;
-      }
-
-      if (estOfficierConnecte() || estSuperAdminConnecte()) {
-        if (statut === "brouillon" || statut === "fermee") {
-          html += `
-            <button
-              onclick="changerStatutCompetition(${Number(competition.id)}, 'Ouverte')"
-              class="secondary-button">
-              🟢 Ouvrir
-            </button>
-          `;
-        }
-
-        if (statut === "ouverte" || statut === "brouillon") {
-          html += `
-            <button
-              onclick="changerStatutCompetition(${Number(competition.id)}, 'Fermée')"
-              class="secondary-button">
-              🔒 Fermer
-            </button>
-          `;
-        }
-      }
-
-      if (estSuperAdminConnecte()) {
-        if (statut !== "archivee") {
-          html += `
-            <button
-              onclick="changerStatutCompetition(${Number(competition.id)}, 'Archivée')"
-              class="secondary-button">
-              📦 Archiver
-            </button>
-          `;
-        }
-
-        if (statut === "archivee") {
-          html += `
-            <button
-              onclick="confirmerSuppressionCompetition(${Number(competition.id)}, '${jsString(competition.nom)}')"
-              class="danger-button">
-              🗑️ Supprimer définitivement
-            </button>
-          `;
-        }
-      }
-
-      html += `</div>`;
-    });
-
-    html += `
-        <button onclick="afficherEspaceOfficier()" class="secondary-button">
-          Retour
-        </button>
-      </div>
-    `;
-
-    setContenu(html);
-  });
-}
-
-function confirmerSuppressionCompetition(idCompetition, nomCompetition) {
-  afficherConfirmation(
-    "Supprimer définitivement ?",
-    "Cette action supprimera la compétition archivée, ses dates et ses présences. Confirmer la suppression définitive de : " + nomCompetition + " ?",
-    function () {
-      supprimerCompetitionDepuisSite(idCompetition);
-    }
-  );
-}
-
-
-
-
-function supprimerCompetitionDepuisSite(idCompetition) {
-  demanderMotDePasseActionSensible(
-    "Confirmer la suppression",
-    "Entre ton mot de passe SuperAdmin pour supprimer définitivement cette compétition.",
-    function (motDePasse) {
-      appelAPISensible(
-        "supprimerCompetition",
-        {
-          idCompetition,
-          utilisateur: utilisateurConnecte.joueur.pseudo,
-          motDePasse
-        },
-        function (data) {
-          if (!data.succes) {
-            return afficherMessageModal("Erreur", data.message);
-          }
-
-          viderCacheFrontend();
-          afficherMessageModal("Compétition supprimée", data.message, afficherGestionCompetitions);
-        }
-      );
-    }
-  );
-}
-
-function changerStatutCompetition(idCompetition, nouveauStatut) {
-  afficherConfirmation("Modifier le statut ?", "Confirmer le passage de cette compétition en statut : " + nouveauStatut + " ?", function () {
-    demanderMotDePasseChangementStatut(idCompetition, nouveauStatut);
-  });
-}
-
-function demanderMotDePasseChangementStatut(idCompetition, nouveauStatut) {
-  fermerModal();
-
-  const modal = document.createElement("div");
-  modal.id = "modal-overlay";
-  modal.innerHTML = `
-    <div class="modal-box">
-      <h2>Confirmer le statut</h2>
-      <div class="modal-message">
-        <p>Entre ton mot de passe officier pour passer la compétition en statut :</p>
-        <p><strong>${escapeHTML(nouveauStatut)}</strong></p>
-      </div>
-      <label for="motDePasseStatutCompetition" class="modal-confirm-label">
-        Mot de passe officier
-      </label>
-      ${champUsernameAutocomplete("usernameStatutCompetition")}
-      <input
-        type="password"
-        id="motDePasseStatutCompetition"
-        name="password"
-        class="modal-confirm-input"
-        autocomplete="current-password"
-      >
-      <div class="modal-actions">
-        <button class="secondary-button" id="annulerStatutCompetition">Annuler</button>
-        <button id="confirmerStatutCompetition">Confirmer</button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(modal);
-
-  const champMotDePasse = document.getElementById("motDePasseStatutCompetition");
-
-  function validerMotDePasseStatut() {
-    const motDePasse = champMotDePasse ? champMotDePasse.value : "";
-
-    if (!motDePasse) {
-      return afficherMessageModal("Mot de passe requis", "Merci de saisir le mot de passe officier.");
-    }
-
-    fermerModal();
-    executerChangementStatutCompetition(idCompetition, nouveauStatut, motDePasse);
-  }
-
-  document.getElementById("annulerStatutCompetition").onclick = fermerModal;
-  document.getElementById("confirmerStatutCompetition").onclick = validerMotDePasseStatut;
-
-  champMotDePasse.onkeydown = function (event) {
-    if (event.key === "Enter") {
-      validerMotDePasseStatut();
-    }
-  };
-
-  champMotDePasse.focus();
-}
-
-function demanderMotDePasseActionSensible(titre, message, actionConfirmer) {
-  fermerModal();
-
-  const modal = document.createElement("div");
-  modal.id = "modal-overlay";
-  modal.innerHTML = `
-    <div class="modal-box">
-      <h2>${escapeHTML(titre)}</h2>
-      <div class="modal-message">
-        <p>${escapeHTML(message)}</p>
-      </div>
-      <label for="motDePasseActionSensible" class="modal-confirm-label">
-        Mot de passe officier
-      </label>
-      ${champUsernameAutocomplete("usernameActionSensible")}
-      <input
-        type="password"
-        id="motDePasseActionSensible"
-        name="password"
-        class="modal-confirm-input"
-        autocomplete="current-password"
-      >
-      <div class="modal-actions">
-        <button class="secondary-button" id="annulerActionSensible">Annuler</button>
-        <button id="confirmerActionSensible">Confirmer</button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(modal);
-
-  const champMotDePasse = document.getElementById("motDePasseActionSensible");
-
-  function validerActionSensible() {
-    const motDePasse = champMotDePasse ? champMotDePasse.value : "";
-
-    if (!motDePasse) {
-      return afficherMessageModal("Mot de passe requis", "Merci de saisir le mot de passe officier.");
-    }
-
-    fermerModal();
-    actionConfirmer(motDePasse);
-  }
-
-  document.getElementById("annulerActionSensible").onclick = fermerModal;
-  document.getElementById("confirmerActionSensible").onclick = validerActionSensible;
-
-  champMotDePasse.onkeydown = function (event) {
-    if (event.key === "Enter") {
-      validerActionSensible();
-    }
-  };
-
-  champMotDePasse.focus();
-}
-
-function executerChangementStatutCompetition(idCompetition, nouveauStatut, motDePasse) {
-  afficherChargement("Modification du statut", "Validation sécurisée en cours...");
-
-  appelAPISensible(
-    "modifierStatutCompetition",
-    {
-      idCompetition,
-      nouveauStatut,
-      utilisateur: utilisateurConnecte.joueur.pseudo,
-      motDePasse
-    },
-    function (data) {
-      if (!data.succes) {
-        return afficherMessageModal("Erreur", data.message || "Le statut n'a pas pu être modifié.", afficherGestionCompetitions);
-      }
-
-      viderCacheFrontend();
-      afficherMessageModal("Statut modifié", data.message || "La compétition est maintenant en statut : " + nouveauStatut, afficherGestionCompetitions);
-    }
-  );
-}
-
-function afficherFormulaireCreationCompetition() {
-  definirModeCarte("large");
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>Créer une compétition</h2>
-
-      <div class="stats-box">
-        <h3>1. Informations générales</h3>
-
-        <label for="nomCompetition">Nom de la compétition</label>
-        <input
-          type="text"
-          id="nomCompetition"
-          placeholder="Ex : Campagne Juin 2026"
-        >
-
-        <label for="descriptionCompetition">Description</label>
-        <input
-          type="text"
-          id="descriptionCompetition"
-          placeholder="Ex : Campagne principale du clan MPP"
-        >
-
-        <label>Rôles autorisés</label>
-        <div class="roles-selection">
-          <label class="checkbox-role">
-            <input type="checkbox" id="roleOfficier" checked>
-            Officier
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" id="roleStrateur" checked>
-            Strateur
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" id="roleSoldat" checked>
-            Soldat
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" id="roleReserviste">
-            Réserviste
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" id="roleRecrue">
-            Recrue
-          </label>
-        </div>
-
-        <label for="statutCompetition">Statut initial</label>
-        <select id="statutCompetition">
-          <option value="Brouillon">Brouillon</option>
-          <option value="Ouverte">Ouverte</option>
-          <option value="Fermée">Fermée</option>
-          <option value="Archivée">Archivée</option>
-        </select>
-      </div>
-
-      <div class="stats-box">
-        <h3>2. Calendrier</h3>
-
-        <label for="dateDebutCompetition">Date de début</label>
-        <input type="date" id="dateDebutCompetition">
-
-        <label for="dateFinCompetition">Date de fin</label>
-        <input type="date" id="dateFinCompetition">
-
-        <label>Jours concernés</label>
-        <div class="roles-selection">
-          <label class="checkbox-role">
-            <input type="checkbox" class="jour-checkbox" value="1" checked>
-            Lundi
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" class="jour-checkbox" value="2" checked>
-            Mardi
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" class="jour-checkbox" value="3" checked>
-            Mercredi
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" class="jour-checkbox" value="4" checked>
-            Jeudi
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" class="jour-checkbox" value="5" checked>
-            Vendredi
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" class="jour-checkbox" value="6">
-            Samedi
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" class="jour-checkbox" value="0">
-            Dimanche
-          </label>
-        </div>
-
-        <label for="horairesCompetition">Horaires de jeu proposés</label>
-        <input
-          type="text"
-          id="horairesCompetition"
-          value="21:00,21:15,21:30"
-        >
-
-        <p>Format attendu : 21:00,21:15,21:30</p>
-      </div>
-
-      <div class="stats-box">
-        <h3>3. Ouverture / fermeture automatique</h3>
-
-        <label for="modeFermetureAuto">Mode</label>
-        <select id="modeFermetureAuto" onchange="gererAffichageFermetureAuto()">
-          <option value="non">Pas de fermeture automatique</option>
-          <option value="oui">Horaires de fermeture</option>
-        </select>
-
-        <div id="zoneFermetureAuto" style="display:none;">
-          <label for="heureOuvertureAuto">Heure d'ouverture automatique</label>
-          <input type="time" id="heureOuvertureAuto" value="08:00">
-
-          <label for="heureFermetureAuto">Heure de fermeture automatique</label>
-          <input type="time" id="heureFermetureAuto" value="20:00">
-
-          <p>
-            La règle sera active uniquement entre la première et la dernière date de la compétition.
-          </p>
-        </div>
-      </div>
-
-      <div class="stats-box">
-        <h3>4. Notification Discord des présences</h3>
-
-        <label for="modeNotificationPresence">Mode</label>
-        <select id="modeNotificationPresence" onchange="gererAffichageNotificationPresence()">
-          <option value="non">Pas de notification</option>
-          <option value="oui">Notification automatique</option>
-        </select>
-
-        <div id="zoneNotificationPresence" style="display:none;">
-          <label for="heureNotificationPresence">Heure de notification</label>
-          <input type="time" id="heureNotificationPresence" value="20:00">
-
-          <p>
-            À l'heure choisie, un message sera envoyé dans le salon staff Discord avec le nombre de présents et remplaçants du jour.
-            Si plusieurs horaires existent, le détail sera précisé par horaire.
-          </p>
-        </div>
-      </div>
-
-      <div class="stats-box">
-        <h3>5. Rappel Discord des présences</h3>
-
-        <label for="modeRappelPresence">Mode</label>
-        <select id="modeRappelPresence" onchange="gererAffichageRappelPresence()">
-          <option value="non">Pas de rappel</option>
-          <option value="oui">Rappel automatique des joueurs sans réponse</option>
-        </select>
-
-        <div id="zoneRappelPresence" style="display:none;">
-          <label for="heureRappelPresence">Heure du rappel</label>
-          <input type="time" id="heureRappelPresence" value="17:00">
-
-          <p>
-            À l'heure choisie, les joueurs actifs qui n'ont pas encore renseigné leurs présences du jour seront relancés sur Discord.
-          </p>
-        </div>
-      </div>
-
-      <button onclick="previsualiserCreationCompetition()">
-        Prévisualiser la création
-      </button>
-
-      <button onclick="afficherGestionCompetitions()" class="secondary-button">
-        Annuler
-      </button>
-    </div>
-  `);
-}
-
-function previsualiserCreationCompetition() {
-  const nom = document.getElementById("nomCompetition").value.trim();
-  const description = document.getElementById("descriptionCompetition").value.trim();
-  const statut = document.getElementById("statutCompetition").value;
-  const dateDebut = document.getElementById("dateDebutCompetition").value;
-  const dateFin = document.getElementById("dateFinCompetition").value;
-  const horaires = document.getElementById("horairesCompetition").value.trim();
-
-  const modeFermetureAuto =
-    document.getElementById("modeFermetureAuto")?.value || "non";
-
-  const fermetureAutoActive =
-    modeFermetureAuto === "oui";
-
-  const heureOuvertureAuto =
-    document.getElementById("heureOuvertureAuto")?.value || "";
-
-  const heureFermetureAuto =
-    document.getElementById("heureFermetureAuto")?.value || "";
-
-  const modeNotificationPresence =
-    document.getElementById("modeNotificationPresence")?.value || "non";
-
-  const notificationPresenceActive =
-    modeNotificationPresence === "oui";
-
-  const heureNotificationPresence =
-    document.getElementById("heureNotificationPresence")?.value || "";
-
-  const modeRappelPresence =
-    document.getElementById("modeRappelPresence")?.value || "non";
-
-  const rappelPresenceActive =
-    modeRappelPresence === "oui";
-
-  const heureRappelPresence =
-    rappelPresenceActive
-      ? document.getElementById("heureRappelPresence")?.value || ""
-      : "";
-
-  const roles = recupererRolesCreationCompetition();
-  const joursSelectionnes = recupererJoursSelectionnes();
-
-  if (!nom) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de saisir un nom de compétition."
-    );
-  }
-
-  if (roles.length === 0) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de sélectionner au moins un rôle autorisé."
-    );
-  }
-
-  if (!dateDebut || !dateFin) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de sélectionner une date de début et une date de fin."
-    );
-  }
-
-  if (new Date(dateFin) < new Date(dateDebut)) {
-    return afficherMessageModal(
-      "Erreur",
-      "La date de fin doit être après la date de début."
-    );
-  }
-
-  if (joursSelectionnes.length === 0) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de sélectionner au moins un jour concerné."
-    );
-  }
-
-  if (!horaires) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de saisir au moins un horaire."
-    );
-  }
-
-  if (
-    fermetureAutoActive &&
-    (!heureOuvertureAuto || !heureFermetureAuto)
-  ) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de renseigner une heure d'ouverture et une heure de fermeture automatique."
-    );
-  }
-
-  if (
-    notificationPresenceActive &&
-    !heureNotificationPresence
-  ) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de renseigner une heure de notification des présences."
-    );
-  }
-
-  if (
-    rappelPresenceActive &&
-    !heureRappelPresence
-  ) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de renseigner une heure de rappel Discord des présences."
-    );
-  }
-
-  const datesGenerees =
-    genererDatesDepuisPeriode(
-      dateDebut,
-      dateFin,
-      joursSelectionnes
-    );
-
-  if (datesGenerees.length === 0) {
-    return afficherMessageModal(
-      "Erreur",
-      "Aucune date générée avec ces paramètres."
-    );
-  }
-
-  afficherRecapCreationCompetition({
-    nom: nom,
-    description: description,
-    statut: statut,
-    rolesAutorises: roles.join(","),
-    dates: datesGenerees,
-    horaires: horaires,
-    fermetureAutoActive: fermetureAutoActive,
-    heureOuvertureAuto: heureOuvertureAuto,
-    heureFermetureAuto: heureFermetureAuto,
-    notificationPresenceActive: notificationPresenceActive,
-    heureNotificationPresence: heureNotificationPresence,
-    rappelPresenceActive: rappelPresenceActive,
-    heureRappelPresence: heureRappelPresence
-  });
-}
-
-function recupererRolesCreationCompetition() {
-  const roles = [];
-  if (document.getElementById("roleOfficier").checked) roles.push("Officier");
-  if (document.getElementById("roleStrateur").checked) roles.push("Strateur");
-  if (document.getElementById("roleSoldat").checked) roles.push("Soldat");
-  if (document.getElementById("roleReserviste").checked) roles.push("Réserviste");
-  if (document.getElementById("roleRecrue").checked) roles.push("Recrue");
-  return roles;
-}
-
-function recupererJoursSelectionnes() {
-  const jours = [];
-  document.querySelectorAll(".jour-checkbox").forEach(c => { if (c.checked) jours.push(Number(c.value)); });
-  return jours;
-}
-
-function genererDatesDepuisPeriode(dateDebut, dateFin, joursSelectionnes) {
-  const dates = [];
-  const [aD, mD, jD] = dateDebut.split("-").map(Number);
-  const [aF, mF, jF] = dateFin.split("-").map(Number);
-  const dateCourante = new Date(aD, mD - 1, jD);
-  const dateLimite = new Date(aF, mF - 1, jF);
-  while (dateCourante <= dateLimite) {
-    if (joursSelectionnes.includes(dateCourante.getDay())) {
-      dates.push(dateCourante.getFullYear() + "-" + String(dateCourante.getMonth() + 1).padStart(2, "0") + "-" + String(dateCourante.getDate()).padStart(2, "0"));
-    }
-    dateCourante.setDate(dateCourante.getDate() + 1);
-  }
-  return dates;
-}
-
-function afficherRecapCreationCompetition(config) {
-  definirModeCarte("large");
-
-  const htmlDates = config.dates
-    .map(function(date) {
-      return `<p>📅 ${escapeHTML(date)}</p>`;
-    })
-    .join("");
-
-  const texteFermetureAuto = config.fermetureAutoActive
-    ? "Oui — ouverture " +
-      escapeHTML(config.heureOuvertureAuto) +
-      " / fermeture " +
-      escapeHTML(config.heureFermetureAuto)
-    : "Non";
-
-  const texteNotificationPresence = config.notificationPresenceActive
-    ? "Oui — notification à " +
-      escapeHTML(config.heureNotificationPresence)
-    : "Non";
-
-  const texteRappelPresence = config.rappelPresenceActive
-    ? "Oui — rappel à " +
-      escapeHTML(config.heureRappelPresence)
-    : "Non";
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>Prévisualisation</h2>
-
-      <div class="stats-box">
-        <h3>${escapeHTML(config.nom)}</h3>
-
-        <p>${escapeHTML(config.description)}</p>
-
-        <p>Statut : ${escapeHTML(config.statut)}</p>
-
-        <p>Rôles autorisés : ${escapeHTML(config.rolesAutorises)}</p>
-
-        <p>Horaires de jeu : ${escapeHTML(config.horaires)}</p>
-
-        <p>Fermeture automatique : ${texteFermetureAuto}</p>
-
-        <p>Notification Discord des présences : ${texteNotificationPresence}</p>
-
-        <p>Rappel Discord des joueurs sans réponse : ${texteRappelPresence}</p>
-
-        <p>Nombre de dates générées : ${config.dates.length}</p>
-      </div>
-
-      <div class="stats-box">
-        <h3>Dates générées</h3>
-        ${htmlDates}
-      </div>
-
-      <button onclick='confirmerCreationCompetitionComplete(${jsonPourAttribut(JSON.stringify(config))})'>
-        Confirmer la création
-      </button>
-
-      <button onclick="afficherFormulaireCreationCompetition()" class="secondary-button">
-        Modifier
-      </button>
-    </div>
-  `);
-}
-
-function confirmerCreationCompetitionComplete(configJSON) {
-  const config = JSON.parse(configJSON);
-
-  demanderMotDePasseActionSensible(
-    "Confirmer la création",
-    "Entre ton mot de passe officier pour créer cette compétition.",
-    function (motDePasse) {
-      appelAPISensible("creerCompetitionComplete", {
-        config: JSON.stringify(config),
-        utilisateur: utilisateurConnecte.joueur.pseudo,
-        motDePasse
-      }, function (data) {
-        if (!data.succes) return afficherMessageModal("Erreur", data.message);
-        viderCacheFrontend();
-        afficherMessageModal("Compétition créée", "La compétition et ses dates ont bien été créées.", afficherGestionCompetitions);
-      });
-    }
-  );
-}
-
-function afficherGestionDatesCompetition(idCompetition, nomCompetition) {
-  definirModeCarte("large");
-  afficherChargement("Gestion des dates");
-  appelAPI("chargerDatesCompetition", { idCompetition }, function (data) {
-    if (!data.succes) return afficherMessageModal("Erreur", data.message);
-    let html = `<div class="form-zone"><h2>Gestion des dates</h2><p>Compétition : ${escapeHTML(nomCompetition)}</p><div class="stats-box"><h3>Dates existantes</h3>`;
-    if (data.dates.length === 0) html += `<p>Aucune date définie.</p>`;
-    data.dates.forEach(function (date) {
-      html += `<div class="date-admin-row"><span>📅 ${escapeHTML(date.dateAffichage)} — ${escapeHTML(date.dateCompetition)}</span><button class="danger-button" onclick="confirmerSuppressionDate(${Number(date.idDate)}, ${idCompetition}, '${jsString(nomCompetition)}')">🗑️ Supprimer</button></div>`;
-    });
-    html += `</div><button onclick="afficherFormulaireAjoutDate(${idCompetition}, '${jsString(nomCompetition)}')">➕ Ajouter une date</button><button onclick="afficherGestionCompetitions()" class="secondary-button">Retour</button></div>`;
-    setContenu(html);
-  });
-}
-
-function afficherFormulaireAjoutDate(idCompetition, nomCompetition) {
-  definirModeCarte("large");
-  setContenu(`<div class="form-zone"><h2>Ajouter une date</h2><p>Compétition : ${escapeHTML(nomCompetition)}</p><label for="nouvelleDateCompetition">Date</label><input type="date" id="nouvelleDateCompetition"><label for="nouveauxHorairesCompetition">Horaires</label><input type="text" id="nouveauxHorairesCompetition" value="21:00,21:15,21:30"><button onclick="ajouterDateDepuisSite(${idCompetition}, '${jsString(nomCompetition)}')">Ajouter la date</button><button onclick="afficherGestionDatesCompetition(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">Annuler</button></div>`);
-}
-
-function ajouterDateDepuisSite(idCompetition, nomCompetition) {
-  const dateChoisie = document.getElementById("nouvelleDateCompetition").value;
-  const horaires = document.getElementById("nouveauxHorairesCompetition").value.trim();
-  if (!dateChoisie) return afficherMessageModal("Erreur", "Merci de sélectionner une date.");
-
-  demanderMotDePasseActionSensible(
-    "Confirmer l'ajout",
-    "Entre ton mot de passe officier pour ajouter cette date.",
-    function (motDePasse) {
-      appelAPISensible("ajouterDateCompetition", {
-        idCompetition,
-        dateCompetition: dateChoisie,
-        horaires,
-        utilisateur: utilisateurConnecte.joueur.pseudo,
-        motDePasse
-      }, function (data) {
-        if (!data.succes) return afficherMessageModal("Erreur", data.message);
-        viderCacheFrontend();
-        afficherMessageModal("Date ajoutée", "La date a bien été ajoutée à la compétition.", () => afficherGestionDatesCompetition(idCompetition, nomCompetition));
-      });
-    }
-  );
-}
-
-function confirmerSuppressionDate(idDate, idCompetition, nomCompetition) {
-  afficherConfirmation("Supprimer la date ?", "Cette action supprimera la date de la compétition. Confirmer ?", function () { supprimerDateDepuisSite(idDate, idCompetition, nomCompetition); });
-}
-
-function supprimerDateDepuisSite(idDate, idCompetition, nomCompetition) {
-  demanderMotDePasseActionSensible(
-    "Confirmer la suppression",
-    "Entre ton mot de passe officier pour supprimer cette date.",
-    function (motDePasse) {
-      appelAPISensible("supprimerDateCompetition", {
-        idDate,
-        utilisateur: utilisateurConnecte.joueur.pseudo,
-        motDePasse
-      }, function (data) {
-        if (!data.succes) return afficherMessageModal("Erreur", data.message);
-        viderCacheFrontend();
-        afficherMessageModal("Date supprimée", "La date a bien été supprimée.", () => afficherGestionDatesCompetition(idCompetition, nomCompetition));
-      });
-    }
-  );
-}
-
-let joueursGestionCache = [];
-
-function afficherGestionJoueurs() {
-  definirModeCarte("large");
-  afficherChargement("Gestion des joueurs");
-
-  appelAPI("chargerJoueurs", {}, function (data) {
-    if (!data.succes) {
-      return afficherMessageModal("Erreur", data.message);
-    }
-
-    joueursGestionCache = data.joueurs || [];
-    triGestionJoueurs = {
-      colonne: "pseudo",
-      direction: "asc"
-    };
-    filtresStatutGestionJoueurs = new Set(STATUTS_GESTION_JOUEURS);
-
-    let html = `
-      <div class="form-zone">
-        <h2>Gestion des joueurs</h2>
-
-        <button onclick="afficherFormulaireAjoutJoueur()">
-          ➕ Ajouter un joueur
-        </button>
-
-        <div class="players-toolbar">
-          <input
-            type="search"
-            id="rechercheJoueur"
-            class="players-search-input"
-            placeholder="Rechercher un joueur&hellip;"
-            oninput="appliquerFiltresGestionJoueurs()"
-          >
-          <button
-            type="button"
-            id="resetGestionJoueurs"
-            class="secondary-button players-reset-button"
-            hidden
-            onclick="reinitialiserVueGestionJoueurs()">
-            Réinitialiser
-          </button>
-        </div>
-
-        <div id="zoneTableauJoueurs"></div>
-
-        <button onclick="afficherEspaceOfficier()" class="secondary-button">
-          Retour
-        </button>
-      </div>
-    `;
-
-    setContenu(html);
-    appliquerFiltresGestionJoueurs();
-  });
-}
-
-function afficherFormulaireAjoutJoueur() {
-  definirModeCarte("large");
-
-  const optionSuperAdmin = estSuperAdminConnecte()
-    ? `
-      <label class="checkbox-role">
-        <input type="checkbox" id="joueurRoleSuperAdmin">
-        SuperAdmin
-      </label>
-    `
-    : "";
-  const champDiscordId = estSuperAdminConnecte()
-    ? `
-      <label for="nouveauDiscordIdJoueur">ID Discord</label>
-      <input
-        type="text"
-        id="nouveauDiscordIdJoueur"
-        inputmode="numeric"
-        pattern="[0-9]*"
-        placeholder="Ex : 123456789012345678"
-      >
-    `
-    : "";
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>Ajouter un joueur</h2>
-
-      <label for="nouveauPseudoJoueur">Pseudo WoT</label>
-      <input
-        type="text"
-        id="nouveauPseudoJoueur"
-        placeholder="Ex : NouveauJoueur"
-      >
-
-      ${champDiscordId}
-
-      <label>Grades</label>
-      <div class="roles-selection">
-        ${optionSuperAdmin}
-
-        <label class="checkbox-role">
-          <input type="checkbox" id="joueurRoleOfficier">
-          Officier
-        </label>
-
-        <label class="checkbox-role">
-          <input type="checkbox" id="joueurRoleStrateur">
-          Strateur
-        </label>
-
-        <label class="checkbox-role">
-          <input type="checkbox" id="joueurRoleSoldat" checked>
-          Soldat
-        </label>
-
-        <label class="checkbox-role">
-          <input type="checkbox" id="joueurRoleReserviste">
-          Réserviste
-        </label>
-
-        <label class="checkbox-role">
-          <input type="checkbox" id="joueurRoleRecrue">
-          Recrue
-        </label>
-      </div>
-
-      <label for="nouveauStatutJoueur">Statut</label>
-      <select id="nouveauStatutJoueur">
-        <option value="Actif">Actif</option>
-        <option value="Inactif">Inactif</option>
-        <option value="Suspendu">Suspendu</option>
-      </select>
-
-      <button onclick="ajouterJoueurDepuisSite()">
-        Créer le joueur
-      </button>
-
-      <button onclick="afficherGestionJoueurs()" class="secondary-button">
-        Annuler
-      </button>
-    </div>
-  `);
-}
-
-function recupererRolesJoueur(prefixe) {
-  const roles = [];
-
-  if (
-    estSuperAdminConnecte() &&
-    document.getElementById(prefixe + "RoleSuperAdmin") &&
-    document.getElementById(prefixe + "RoleSuperAdmin").checked
-  ) {
-    roles.push("SuperAdmin");
-  }
-
-  if (document.getElementById(prefixe + "RoleOfficier").checked) roles.push("Officier");
-  if (document.getElementById(prefixe + "RoleStrateur").checked) roles.push("Strateur");
-  if (document.getElementById(prefixe + "RoleSoldat").checked) roles.push("Soldat");
-  if (document.getElementById(prefixe + "RoleReserviste").checked) roles.push("Réserviste");
-  if (document.getElementById(prefixe + "RoleRecrue").checked) roles.push("Recrue");
-
-  return roles;
-}
-
-function recupererDiscordIdJoueur(idChamp) {
-  const champ = document.getElementById(idChamp);
-  if (!champ) return "";
-
-  const discordId = champ.value.trim();
-
-  if (discordId && !/^\d+$/.test(discordId)) {
-    afficherMessageModal("Erreur", "L’ID Discord doit contenir uniquement des chiffres.");
-    return null;
-  }
-
-  return discordId;
-}
-
-function ajouterJoueurDepuisSite() {
-  const pseudo = document.getElementById("nouveauPseudoJoueur").value.trim();
-  const statut = document.getElementById("nouveauStatutJoueur").value;
-  const roles = recupererRolesJoueur("joueur");
-  const discordId = recupererDiscordIdJoueur("nouveauDiscordIdJoueur");
-  if (discordId === null) return;
-  if (!pseudo) return afficherMessageModal("Erreur", "Merci de saisir un pseudo.");
-  if (roles.length === 0) return afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle.");
-
-  demanderMotDePasseActionSensible(
-    "Confirmer l'ajout",
-    "Entre ton mot de passe officier pour créer ce joueur.",
-    function (motDePasse) {
-      appelAPISensible("ajouterJoueur", {
-        pseudo,
-        roles: roles.join(","),
-        statut,
-        discordId,
-        utilisateur: utilisateurConnecte.joueur.pseudo,
-        motDePasse
-      }, function (data) {
-        if (!data.succes) {
-          return afficherMessageModal("Erreur", data.message || "Le joueur n'a pas pu être ajouté.");
-        }
-
-        viderCacheFrontend();
-        afficherMessageModal("Joueur ajouté", data.message || "Le joueur a bien été ajouté.", afficherGestionJoueurs);
-      });
-    }
-  );
-}
-
-function afficherFormulaireModificationJoueur(joueur) {
-  definirModeCarte("large");
-
-  const rolesActuels = String(joueur.roles || "");
-
-  const optionSuperAdmin = estSuperAdminConnecte()
-    ? `
-      <label class="checkbox-role">
-        <input
-          type="checkbox"
-          id="modifierRoleSuperAdmin"
-          ${rolesActuels.includes("SuperAdmin") ? "checked" : ""}
-        >
-        SuperAdmin
-      </label>
-    `
-    : "";
-  const champDiscordId = estSuperAdminConnecte()
-    ? `
-      <label for="modifierDiscordIdJoueur">ID Discord</label>
-      <input
-        type="text"
-        id="modifierDiscordIdJoueur"
-        inputmode="numeric"
-        pattern="[0-9]*"
-        value="${escapeHTML(joueur.discordId || "")}"
-        placeholder="Ex : 123456789012345678"
-      >
-    `
-    : "";
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>Modifier un joueur</h2>
-
-      <label for="modifierPseudoJoueur">Pseudo WoT</label>
-      <input
-        type="text"
-        id="modifierPseudoJoueur"
-        value="${escapeHTML(joueur.pseudo)}"
-      >
-
-      ${champDiscordId}
-
-      <label>Grades</label>
-      <div class="roles-selection">
-        ${optionSuperAdmin}
-
-        <label class="checkbox-role">
-          <input
-            type="checkbox"
-            id="modifierRoleOfficier"
-            ${rolesActuels.includes("Officier") ? "checked" : ""}
-          >
-          Officier
-        </label>
-
-        <label class="checkbox-role">
-          <input
-            type="checkbox"
-            id="modifierRoleStrateur"
-            ${rolesActuels.includes("Strateur") ? "checked" : ""}
-          >
-          Strateur
-        </label>
-
-        <label class="checkbox-role">
-          <input
-            type="checkbox"
-            id="modifierRoleSoldat"
-            ${rolesActuels.includes("Soldat") ? "checked" : ""}
-          >
-          Soldat
-        </label>
-
-        <label class="checkbox-role">
-          <input
-            type="checkbox"
-            id="modifierRoleReserviste"
-            ${rolesActuels.includes("Réserviste") ? "checked" : ""}
-          >
-          Réserviste
-        </label>
-
-        <label class="checkbox-role">
-          <input
-            type="checkbox"
-            id="modifierRoleRecrue"
-            ${rolesActuels.includes("Recrue") ? "checked" : ""}
-          >
-          Recrue
-        </label>
-      </div>
-
-      <label for="modifierStatutJoueur">Statut</label>
-      <select id="modifierStatutJoueur">
-        <option value="Actif" ${joueur.statut === "Actif" ? "selected" : ""}>
-          Actif
-        </option>
-
-        <option value="Inactif" ${joueur.statut === "Inactif" ? "selected" : ""}>
-          Inactif
-        </option>
-
-        <option value="Suspendu" ${joueur.statut === "Suspendu" ? "selected" : ""}>
-          Suspendu
-        </option>
-      </select>
-
-      <button onclick="modifierJoueurDepuisSite(${Number(joueur.id)})">
-        Enregistrer les modifications
-      </button>
-
-      <button onclick="afficherGestionJoueurs()" class="secondary-button">
-        Annuler
-      </button>
-    </div>
-  `);
-}
-
-function modifierJoueurDepuisSite(idJoueur) {
-  const pseudo = document.getElementById("modifierPseudoJoueur").value.trim();
-  const statut = document.getElementById("modifierStatutJoueur").value;
-  const roles = recupererRolesJoueur("modifier");
-  const discordId = recupererDiscordIdJoueur("modifierDiscordIdJoueur");
-  if (discordId === null) return;
-  if (!pseudo) return afficherMessageModal("Erreur", "Merci de saisir un pseudo.");
-  if (roles.length === 0) return afficherMessageModal("Erreur", "Merci de sélectionner au moins un rôle.");
-
-  demanderMotDePasseActionSensible(
-    "Confirmer la modification",
-    "Entre ton mot de passe officier pour modifier ce joueur.",
-    function (motDePasse) {
-      appelAPISensible("modifierJoueur", {
-        idJoueur,
-        pseudo,
-        roles: roles.join(","),
-        statut,
-        discordId,
-        utilisateur: utilisateurConnecte.joueur.pseudo,
-        motDePasse
-      }, function (data) {
-        if (!data.succes) {
-          return afficherMessageModal("Erreur", data.message || "Le joueur n'a pas pu être modifié.");
-        }
-
-        viderCacheFrontend();
-        afficherMessageModal("Joueur modifié", data.message || "Les informations du joueur ont bien été mises à jour.", afficherGestionJoueurs);
-      });
-    }
-  );
-}
-
-function confirmerSuppressionJoueur(idJoueur) {
-  const joueur = joueursGestionCache.find(function (item) {
-    return Number(item.id) === Number(idJoueur);
-  });
-
-  if (!joueur) {
-    return afficherMessageModal("Erreur", "Joueur introuvable dans la liste affichée.");
-  }
-
-  const pseudo = String(joueur.pseudo || "").trim();
-  const roles = String(joueur.roles || "").toLowerCase();
-  const pseudoConnecte = String(utilisateurConnecte?.joueur?.pseudo || "").trim().toLowerCase();
-
-  if (!estSuperAdminConnecte()) {
-    return afficherMessageModal("Accès refusé", "Seul un SuperAdmin peut supprimer un joueur.");
-  }
-
-  if (!pseudo) {
-    return afficherMessageModal("Erreur", "Joueur invalide.");
-  }
-
-  if (roles.includes("superadmin")) {
-    return afficherMessageModal("Action impossible", "Impossible de supprimer un SuperAdmin.");
-  }
-
-  if (pseudo.toLowerCase() === pseudoConnecte) {
-    return afficherMessageModal("Action impossible", "Impossible de supprimer votre propre compte.");
-  }
-
-  fermerModal();
-
-  const modal = document.createElement("div");
-  modal.id = "modal-overlay";
-  modal.innerHTML = `
-    <div class="modal-box modal-danger">
-      <h2>Supprimer le joueur</h2>
-      <p class="modal-danger-pseudo">${escapeHTML(pseudo)}</p>
-      <div class="modal-message">
-        <p>Cette action est définitive.</p>
-        <p>Le joueur sera supprimé du clan et toutes ses présences seront aussi supprimées.</p>
-      </div>
-      <label for="confirmationSuppressionJoueur" class="modal-confirm-label">
-        Tapez SUPPRIMER pour confirmer
-      </label>
-      <input
-        type="text"
-        id="confirmationSuppressionJoueur"
-        class="modal-confirm-input"
-        autocomplete="off"
-      >
-      <div class="modal-actions">
-        <button class="secondary-button" id="annulerSuppressionJoueur">Annuler</button>
-        <button class="danger-button" id="confirmerSuppressionJoueur" disabled>
-          Supprimer définitivement
-        </button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(modal);
-
-  const champConfirmation = document.getElementById("confirmationSuppressionJoueur");
-  const boutonConfirmer = document.getElementById("confirmerSuppressionJoueur");
-
-  document.getElementById("annulerSuppressionJoueur").onclick = fermerModal;
-
-  champConfirmation.oninput = function () {
-    boutonConfirmer.disabled = champConfirmation.value !== "SUPPRIMER";
-  };
-
-  champConfirmation.onkeydown = function (event) {
-    if (event.key === "Enter" && champConfirmation.value === "SUPPRIMER") {
-      fermerModal();
-      supprimerJoueurDepuisSite(Number(idJoueur));
-    }
-  };
-
-  boutonConfirmer.onclick = function () {
-    if (champConfirmation.value !== "SUPPRIMER") return;
-    fermerModal();
-    supprimerJoueurDepuisSite(Number(idJoueur));
-  };
-
-  champConfirmation.focus();
-}
-
-function supprimerJoueurDepuisSite(idJoueur) {
-  if (!estSuperAdminConnecte()) {
-    return afficherMessageModal("Accès refusé", "Seul un SuperAdmin peut supprimer un joueur.");
-  }
-
-  if (!motDePasseDemandesDiscord) {
-    return afficherMessageModal(
-      "Mot de passe requis",
-      "Merci de valider l'accès SuperAdmin avant de supprimer un joueur.",
-      afficherDemandeMotDePasseOfficier
-    );
-  }
-
-  afficherChargement("Suppression du joueur", "Suppression du joueur et de ses présences...");
-
-  appelAPISensible(
-    "supprimerJoueur",
-    {
-      idJoueur,
-      utilisateur: utilisateurConnecte.joueur.pseudo,
-      motDePasse: motDePasseDemandesDiscord
-    },
-    function (data) {
-      if (!data.succes) {
-        return afficherMessageModal(
-          "Erreur",
-          data.message || "La suppression du joueur a échoué.",
-          afficherGestionJoueurs
-        );
-      }
-
-      viderCacheFrontend();
-      joueursGestionCache = [];
-
-      afficherMessageModal(
-        "Joueur supprimé",
-        data.message,
-        afficherGestionJoueurs
-      );
-    }
-  );
-}
-
-function afficherLiaisonDiscord() {
-  definirModeCarte("normal");
-
-  const joueur = utilisateurConnecte?.joueur || {};
-  const pseudo = joueur.pseudo || "";
-  const discordUsername = joueur.discordUsername || "";
-  const discordLieA = joueur.discordLieA || "";
-  const statutLiaison = discordLieA || discordUsername || joueur.discordId
-    ? `
-      <div class="discord-status-linked">
-        Discord lié${discordUsername ? " : " + escapeHTML(discordUsername) : ""}
-      </div>
-    `
-    : `
-      <div class="discord-status-pending">
-        Aucun Discord validé pour le moment.
-      </div>
-    `;
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>Lier mon Discord</h2>
-
-      <div class="discord-link-box">
-        <p>Pseudo connecté : <strong>${escapeHTML(pseudo)}</strong></p>
-        ${statutLiaison}
-
-        <button onclick="genererCodeLiaisonDiscordDepuisSite()">
-          Générer un code de liaison Discord
-        </button>
-      </div>
-
-      <div id="zoneCodeLiaisonDiscord"></div>
-
-      <button onclick="retourAccueilConnecte()" class="secondary-button">
-        Retour à l’accueil
-      </button>
-    </div>
-  `);
-}
-
-function genererCodeLiaisonDiscordDepuisSite() {
-  const zone = document.getElementById("zoneCodeLiaisonDiscord");
-  const pseudo = utilisateurConnecte?.joueur?.pseudo || "";
-
-  if (!pseudo) {
-    return afficherMessageModal("Erreur", "Impossible d’identifier le joueur connecté.");
-  }
-
-  if (zone) {
-    zone.innerHTML = `
-      <div class="discord-link-box">
-        <p>Génération du code en cours...</p>
-      </div>
-    `;
-  }
-
-  appelAPI(
-    "genererCodeLiaisonDiscord",
-    { pseudo },
-    function (data) {
-      if (!data.succes) {
-        if (zone) {
-          zone.innerHTML = `<p class="error">${escapeHTML(data.message || "Impossible de générer le code.")}</p>`;
-        }
-        return;
-      }
-
-      const code = data.code ||
-        data.linkCode ||
-        data.link_code ||
-        data.discordCode ||
-        data.discord_link_code ||
-        data.codeLiaison ||
-        data.code_liaison ||
-        "";
-      const expiration = data.expiresAt || data.expires_at || data.expiration || data.expireA || "";
-      const expirationTexte = formaterDateHeureFrance(expiration);
-
-      if (!code) {
-        if (zone) {
-          zone.innerHTML = `<p class="error">Le code n’a pas été retourné par le serveur.</p>`;
-        }
-        return;
-      }
-
-      if (zone) {
-        zone.innerHTML = `
-          <div class="discord-link-box">
-            <h3>Code temporaire</h3>
-            <div class="discord-code-row">
-              <div class="discord-code-box">${escapeHTML(code)}</div>
-              <button
-                type="button"
-                class="discord-copy-button"
-                title="Copier le code"
-                aria-label="Copier le code"
-                onclick='copierCodeLiaisonDiscord(${jsonPourAttribut(code)})'>
-                📋
-              </button>
-            </div>
-            <p id="discordCodeCopyFeedback" class="discord-copy-feedback" hidden>Code copié</p>
-            <p>Expire le : <strong>${escapeHTML(expirationTexte)}</strong></p>
-            <ol class="discord-instructions">
-              <li>Va sur Discord.</li>
-              <li>Tape la commande <strong>/lier code: ${escapeHTML(code)}</strong>.</li>
-              <li>Attends la validation d’un officier.</li>
-            </ol>
-          </div>
-        `;
-      }
-    }
-  );
-}
-
-function copierCodeLiaisonDiscord(code) {
-  const texte = String(code || "");
-  const feedback = document.getElementById("discordCodeCopyFeedback");
-
-  function afficherRetourCopie() {
-    if (!feedback) return;
-    feedback.hidden = false;
-    clearTimeout(afficherRetourCopie.timeoutId);
-    afficherRetourCopie.timeoutId = setTimeout(function () {
-      feedback.hidden = true;
-    }, 2500);
-  }
-
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(texte)
-      .then(afficherRetourCopie)
-      .catch(function () {
-        copierTexteFallback(texte);
-        afficherRetourCopie();
-      });
-    return;
-  }
-
-  copierTexteFallback(texte);
-  afficherRetourCopie();
-}
-
-function copierTexteFallback(texte) {
-  const champTemporaire = document.createElement("textarea");
-  champTemporaire.value = texte;
-  champTemporaire.setAttribute("readonly", "readonly");
-  champTemporaire.style.position = "fixed";
-  champTemporaire.style.left = "-9999px";
-  document.body.appendChild(champTemporaire);
-  champTemporaire.select();
-  document.execCommand("copy");
-  champTemporaire.remove();
-}
-
-function afficherDemandesLiaisonDiscord() {
-  if (!estSuperAdminConnecte()) {
-    return afficherMessageModal("Accès refusé", "Seul un officier habilité peut gérer les liaisons Discord.");
-  }
-
-  definirModeCarte("large");
-  motDePasseDemandesDiscord = "";
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>Liaisons Discord</h2>
-
-      <div class="discord-link-box">
-        <p>Entre le mot de passe administrateur pour charger les demandes en attente.</p>
-
-        <label for="motDePasseDemandesDiscord">Mot de passe administrateur</label>
-        ${champUsernameAutocomplete("usernameDemandesDiscord")}
-        <input
-          type="password"
-          id="motDePasseDemandesDiscord"
-          name="password"
-          autocomplete="current-password"
-          onkeydown="if(event.key==='Enter'){chargerDemandesLiaisonDiscordDepuisSite();}"
-        >
-
-        <button onclick="chargerDemandesLiaisonDiscordDepuisSite()">
-          Charger les demandes
-        </button>
-      </div>
-
-      <div id="zoneDemandesLiaisonDiscord"></div>
-
-      <button onclick="retourAccueilConnecte()" class="secondary-button">
-        Retour à l’accueil
-      </button>
-    </div>
-  `);
-}
-
-function chargerDemandesLiaisonDiscordDepuisSite() {
-  const champMotDePasse = document.getElementById("motDePasseDemandesDiscord");
-  const motDePasse = champMotDePasse?.value || motDePasseDemandesDiscord;
-  const zone = document.getElementById("zoneDemandesLiaisonDiscord");
-
-  if (!motDePasse) {
-    return afficherMessageModal("Erreur", "Merci de saisir le mot de passe administrateur.");
-  }
-
-  motDePasseDemandesDiscord = motDePasse;
-
-  if (zone) {
-    zone.innerHTML = `
-      <div class="discord-link-box">
-        <p>Chargement des demandes...</p>
-      </div>
-    `;
-  }
-
-  appelAPISensible(
-    "chargerDemandesLiaisonDiscord",
-    {
-      utilisateur: utilisateurConnecte.joueur.pseudo,
-      motDePasse: motDePasseDemandesDiscord
-    },
-    function (data) {
-      if (!data.succes) {
-        if (zone) {
-          zone.innerHTML = `<p class="error">${escapeHTML(data.message || "Impossible de charger les demandes.")}</p>`;
-        }
-        return;
-      }
-
-      const demandesEnAttente = filtrerDemandesLiaisonEnAttente(data.demandes || []);
-      mettreAJourBadgeDemandesDiscord(demandesEnAttente.length);
-      afficherListeDemandesLiaisonDiscord(demandesEnAttente);
-    }
-  );
-}
-
-function afficherListeDemandesLiaisonDiscord(demandes) {
-  const zone = document.getElementById("zoneDemandesLiaisonDiscord");
-  if (!zone) return;
-
-  if (!demandes || demandes.length === 0) {
-    zone.innerHTML = `
-      <div class="discord-link-box">
-        <p>Aucune demande de liaison Discord en attente.</p>
-      </div>
-    `;
-    return;
-  }
-
-  zone.innerHTML = demandes.map(function (demande) {
-    const idDemande = String(valeurDemandeDiscord(demande, ["id", "idDemande", "request_id"]));
-    const pseudo = valeurDemandeDiscord(demande, ["pseudo", "joueur_pseudo", "joueurPseudo"], "-");
-    const discordUsername = valeurDemandeDiscord(
-      demande,
-      ["discordUsername", "discord_username", "username", "global_name"],
-      "Utilisateur Discord"
-    );
-    const dateDemande = valeurDemandeDiscord(demande, ["createdAt", "created_at", "usedAt", "used_at"]);
-    const expiration = valeurDemandeDiscord(demande, ["expiresAt", "expires_at", "expiration"]);
-
-    return `
-      <div class="discord-request-card">
-        <h3>${escapeHTML(pseudo)}</h3>
-        <p>Discord : <strong>${escapeHTML(discordUsername)}</strong></p>
-        <p>Demande : ${escapeHTML(formaterDateHeureFrance(dateDemande))}</p>
-        <p>Expiration du code : ${escapeHTML(formaterDateHeureFrance(expiration))}</p>
-        <div class="discord-request-actions">
-          <button onclick='validerDemandeLiaisonDiscordDepuisSite(${jsonPourAttribut(idDemande)})'>
-            Valider
-          </button>
-          <button class="danger-button" onclick='refuserDemandeLiaisonDiscordDepuisSite(${jsonPourAttribut(idDemande)})'>
-            Refuser
-          </button>
-        </div>
-      </div>
-    `;
-  }).join("");
-}
-
-function validerDemandeLiaisonDiscordDepuisSite(idDemande) {
-  if (!motDePasseDemandesDiscord) {
-    return afficherMessageModal("Erreur", "Merci de charger les demandes avec le mot de passe administrateur.");
-  }
-
-  afficherConfirmation(
-    "Valider la liaison Discord ?",
-    "Cette action associera le Discord au joueur concerné.",
-    function () {
-      appelAPISensible(
-        "validerDemandeLiaisonDiscord",
-        {
-          idDemande,
-          utilisateur: utilisateurConnecte.joueur.pseudo,
-          motDePasse: motDePasseDemandesDiscord
-        },
-        function (data) {
-          if (!data.succes) {
-            return afficherMessageModal("Erreur", data.message || "Impossible de valider la demande.");
-          }
-
-          afficherMessageModal("Liaison validée", data.message || "La liaison Discord a été validée.", chargerDemandesLiaisonDiscordDepuisSite);
-        }
-      );
-    }
-  );
-}
-
-function refuserDemandeLiaisonDiscordDepuisSite(idDemande) {
-  if (!motDePasseDemandesDiscord) {
-    return afficherMessageModal("Erreur", "Merci de charger les demandes avec le mot de passe administrateur.");
-  }
-
-  afficherConfirmation(
-    "Refuser la liaison Discord ?",
-    "Cette action refusera la demande sans modifier le joueur.",
-    function () {
-      appelAPISensible(
-        "refuserDemandeLiaisonDiscord",
-        {
-          idDemande,
-          utilisateur: utilisateurConnecte.joueur.pseudo,
-          motDePasse: motDePasseDemandesDiscord,
-          raison: ""
-        },
-        function (data) {
-          if (!data.succes) {
-            return afficherMessageModal("Erreur", data.message || "Impossible de refuser la demande.");
-          }
-
-          afficherMessageModal("Liaison refusée", data.message || "La demande de liaison Discord a été refusée.", chargerDemandesLiaisonDiscordDepuisSite);
-        }
-      );
-    }
-  );
-}
-
-function chargerSansReponse(idCompetition, nomCompetition) {
-  definirModeCarte("large");
-  afficherChargement("Joueurs sans réponse");
-  appelAPI("chargerJoueursSansReponse", { idCompetition }, function (data) {
-    if (!data.succes) return afficherErreur(data.message, `<button onclick="afficherTableauPresencesOfficier(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">Retour</button>`);
-    let html = `<div class="form-zone"><h2>Joueurs sans réponse</h2><p>Compétition : ${escapeHTML(nomCompetition)}</p><p>Total : ${data.nombre}</p><div class="table-container"><table class="presence-table"><thead><tr><th>Joueur</th><th>Rôles</th></tr></thead><tbody>`;
-    if (data.joueurs.length === 0) html += `<tr><td colspan="2">Tous les joueurs actifs ont répondu.</td></tr>`;
-    data.joueurs.forEach(j => html += `<tr><td>${escapeHTML(j.pseudo)}</td><td>${escapeHTML(j.roles)}</td></tr>`);
-    html += `
-      </tbody></table></div>
-      <div class="table-actions">
-        <button onclick="afficherAujourdHuiOfficier()">
-          📅 Présences du jour
-        </button>
-        <button onclick="afficherTableauPresencesOfficier(${idCompetition}, '${jsString(nomCompetition)}')" class="secondary-button">
-          Retour au tableau
-        </button>
-      </div>
-    </div>`;
-    setContenu(html);
-  });
-}
-
-function formaterActionJournal(action) {
-  const actionTexte = String(action || "").trim();
-  const actions = {
-    "Sauvegarde présences": "Présences mises à jour",
-    "Suppression joueur": "Joueur supprimé",
-    "Modification joueur": "Joueur modifié",
-    "Ajout joueur": "Joueur ajouté",
-    "Création compétition": "Compétition créée",
-    "Création compétition complète": "Compétition créée",
-    "Modification compétition": "Compétition modifiée",
-    "Modification statut compétition": "Statut de compétition modifié",
-    "Suppression compétition": "Compétition supprimée",
-    "Ajout date compétition": "Date ajoutée",
-    "Suppression date compétition": "Date supprimée",
-    "Ouverture/Fermeture automatique": "Statut modifié automatiquement",
-    "Notification Discord présences": "Rappel Discord envoyé",
-    "Changement mot de passe": "Mot de passe modifié"
-  };
-
-  return actions[actionTexte] || actionTexte || "-";
-}
-
-function formaterDetailsJournal(details) {
-  const detailsTexte = String(details || "").trim();
-  if (!detailsTexte) return "-";
-  return detailsTexte.replace(/\s+\|\s+/g, "\n");
-}
-
-function extraireDateJournal(dateHeure) {
-  const texte = String(dateHeure || "");
-  const correspondance = texte.match(/\b\d{2}\/\d{2}\/\d{4}\b/);
-  return correspondance ? correspondance[0] : "Date inconnue";
-}
-
-function comparerDatesJournal(a, b) {
-  if (a === "Date inconnue") return 1;
-  if (b === "Date inconnue") return -1;
-
-  const isoA = a.split("/").reverse().join("-");
-  const isoB = b.split("/").reverse().join("-");
-  return isoB.localeCompare(isoA);
-}
-
-function valeursJournal(cle) {
-  return journalActiviteValeursFiltres[cle] || [];
-}
-
-function calculerValeursFiltresJournal(entrees) {
-  function valeursUniques(propriete) {
-    return Array.from(new Set(
-      (entrees || []).map(function (entree) {
-        return entree[propriete] || "-";
-      })
-    ));
-  }
-
-  return {
-    dates: valeursUniques("dateFiltre").sort(comparerDatesJournal),
-    utilisateurs: valeursUniques("utilisateur").sort(function (a, b) {
-      return String(a).localeCompare(String(b), "fr", { sensitivity: "base" });
-    }),
-    actions: valeursUniques("action").sort(function (a, b) {
-      return String(a).localeCompare(String(b), "fr", { sensitivity: "base" });
-    })
-  };
-}
-
-function preparerEntreesJournal(journal) {
-  return (journal || []).map(function (entree, index) {
-    const action = formaterActionJournal(entree.action);
-
-    return {
-      id: index,
-      dateHeure: entree.dateHeure || "",
-      dateFiltre: extraireDateJournal(entree.dateHeure),
-      utilisateur: entree.utilisateur || "-",
-      action: action,
-      details: formaterDetailsJournal(entree.details)
-    };
-  });
-}
-
-function initialiserFiltresJournal() {
-  journalActiviteFiltres = {
-    dates: new Set(valeursJournal("dates")),
-    utilisateurs: new Set(valeursJournal("utilisateurs")),
-    actions: new Set(valeursJournal("actions"))
-  };
-}
-
-function filtreJournalActif(cle) {
-  const valeurs = valeursJournal(cle);
-  const selection = journalActiviteFiltres[cle] || new Set();
-  return selection.size !== valeurs.length;
-}
-
-function rendreFiltreEnteteJournal(cle, titre) {
-  const valeurs = valeursJournal(cle);
-  const selection = journalActiviteFiltres[cle] || new Set();
-  const compteur = selection.size + "/" + valeurs.length;
-  const classeCompteur = filtreJournalActif(cle)
-    ? "journal-filter-count journal-filter-count-active"
-    : "journal-filter-count";
-
-  let html = `
-    <details class="journal-filter journal-header-filter">
-      <summary>
-        <span class="journal-filter-label">${escapeHTML(titre)}</span>
-        <span class="journal-filter-meta">
-          <span id="journalCompteur_${cle}" class="${classeCompteur}">${escapeHTML(compteur)}</span>
-          <span class="journal-filter-arrow">▾</span>
-        </span>
-      </summary>
-      <div class="journal-filter-panel">
-        <div class="journal-filter-actions">
-          <button type="button" onclick="selectionnerFiltreJournal('${cle}', true)">Tout sélectionner</button>
-          <button type="button" onclick="selectionnerFiltreJournal('${cle}', false)" class="secondary-button">Tout désélectionner</button>
-        </div>
-  `;
-
-  valeurs.forEach(function (valeur) {
-    html += `
-      <label class="journal-filter-option">
-        <input
-          type="checkbox"
-          data-journal-filter="${escapeHTML(cle)}"
-          value="${escapeHTML(valeur)}"
-          ${selection.has(valeur) ? "checked" : ""}
-          onchange="changerFiltreJournal('${cle}', this.value, this.checked)"
-        >
-        <span>${escapeHTML(valeur)}</span>
-      </label>
-    `;
-  });
-
-  html += `
-      </div>
-    </details>
-  `;
-
-  return html;
-}
-
-function entreeJournalVisible(entree) {
-  return journalActiviteFiltres.dates.has(entree.dateFiltre) &&
-    journalActiviteFiltres.utilisateurs.has(entree.utilisateur) &&
-    journalActiviteFiltres.actions.has(entree.action);
-}
-
-function mettreAJourCompteursFiltresJournal() {
-  ["dates", "utilisateurs", "actions"].forEach(function (cle) {
-    const compteur = document.getElementById("journalCompteur_" + cle);
-    if (!compteur) return;
-
-    compteur.textContent = journalActiviteFiltres[cle].size + "/" + valeursJournal(cle).length;
-    compteur.classList.toggle("journal-filter-count-active", filtreJournalActif(cle));
-  });
-}
-
-function rendreTableauJournal() {
-  const corpsTableau = document.getElementById("journalActiviteBody");
-  if (!corpsTableau) return;
-
-  const entreesVisibles = journalActiviteEntrees.filter(entreeJournalVisible);
-
-  if (entreesVisibles.length === 0) {
-    corpsTableau.innerHTML = `
-      <tr>
-        <td colspan="4" class="journal-empty">
-          Aucune action ne correspond aux filtres sélectionnés.
-        </td>
-      </tr>
-    `;
-    return;
-  }
-
-  corpsTableau.innerHTML = entreesVisibles.map(function (entree) {
-    return `
-      <tr>
-        <td class="journal-date">${escapeHTML(entree.dateHeure)}</td>
-        <td class="journal-user">${escapeHTML(entree.utilisateur)}</td>
-        <td class="journal-action">${escapeHTML(entree.action)}</td>
-        <td class="journal-details">${escapeHTML(entree.details)}</td>
-      </tr>
-    `;
-  }).join("");
-}
-
-function changerFiltreJournal(cle, valeur, actif) {
-  if (!journalActiviteFiltres[cle]) return;
-
-  if (actif) {
-    journalActiviteFiltres[cle].add(valeur);
-  } else {
-    journalActiviteFiltres[cle].delete(valeur);
-  }
-
-  mettreAJourCompteursFiltresJournal();
-  rendreTableauJournal();
-}
-
-function selectionnerFiltreJournal(cle, toutSelectionner) {
-  if (!journalActiviteFiltres[cle]) return;
-
-  const valeurs = valeursJournal(cle);
-  journalActiviteFiltres[cle] = toutSelectionner ? new Set(valeurs) : new Set();
-
-  document.querySelectorAll(`[data-journal-filter="${cle}"]`).forEach(function (caseFiltre) {
-    caseFiltre.checked = toutSelectionner;
-  });
-
-  mettreAJourCompteursFiltresJournal();
-  rendreTableauJournal();
-}
-
-function reinitialiserFiltresJournal() {
-  initialiserFiltresJournal();
-
-  ["dates", "utilisateurs", "actions"].forEach(function (cle) {
-    document.querySelectorAll(`[data-journal-filter="${cle}"]`).forEach(function (caseFiltre) {
-      caseFiltre.checked = true;
-    });
-  });
-
-  mettreAJourCompteursFiltresJournal();
-  rendreTableauJournal();
-}
-
-function afficherJournalActivite() {
-  definirModeCarte("large");
-  afficherChargement("Journal d'activité", "Chargement du journal...");
-  appelAPI("chargerJournalActivite", {}, function (data) {
-    if (!data.succes) return afficherMessageModal("Erreur", data.message);
-
-    journalActiviteEntrees = preparerEntreesJournal(data.journal);
-    journalActiviteValeursFiltres = calculerValeursFiltresJournal(journalActiviteEntrees);
-    initialiserFiltresJournal();
-
-    let html = `
-      <div class="form-zone">
-        <h2>Journal d'activité</h2>
-        <div class="journal-toolbar">
-          <button type="button" class="secondary-button journal-reset-button" onclick="reinitialiserFiltresJournal()">
-            Réinitialiser les filtres
-          </button>
-        </div>
-        <div class="table-container journal-container">
-          <table class="presence-table journal-table">
-            <thead>
-              <tr>
-                <th class="journal-date">${rendreFiltreEnteteJournal("dates", "Date / Heure")}</th>
-                <th class="journal-user">${rendreFiltreEnteteJournal("utilisateurs", "Utilisateur")}</th>
-                <th class="journal-action">${rendreFiltreEnteteJournal("actions", "Action")}</th>
-                <th class="journal-details"><span class="journal-static-heading">Détails</span></th>
-              </tr>
-            </thead>
-            <tbody id="journalActiviteBody"></tbody>
-          </table>
-        </div>
-        <button onclick="afficherEspaceOfficier()" class="secondary-button">Retour</button>
-      </div>
-    `;
-
-    setContenu(html);
-    rendreTableauJournal();
-  });
-}
-
-function formaterAffichagePresence(dispo) {
-
-  const horaires = String(dispo.horairesDisponibles || "")
-    .split(",")
-    .map(h => h.trim())
-    .filter(Boolean);
-
-  if (dispo.statut === "Présent") {
-
-  if (horaires.length > 0) {
-    return `
-      <div class="presence-cell">
-        <div>🟢</div>
-        <div class="nb-horaires">(${horaires.length})</div>
-      </div>
-    `;
-  }
-
-  return "🟢";
-}
-
-if (dispo.statut === "Remplaçant") {
-
-  if (horaires.length > 0) {
-    return `
-      <div class="presence-cell">
-        <div>🔵</div>
-        <div class="nb-horaires">(${horaires.length})</div>
-      </div>
-    `;
-  }
-
-  return "🔵";
-}
-
-  if (dispo.statut === "Absent") {
-    return "🔴";
-  }
-
-  return "⚪";
-}
-
-function afficherDetailPresence(pseudoJSON, dispoJSON) {
-  let pseudo;
-  let dispo;
-
-  try {
-    pseudo = JSON.parse(pseudoJSON);
-    dispo = JSON.parse(dispoJSON);
-  } catch (erreur) {
-    afficherMessageModal("Erreur", "Le détail de cette présence est invalide.");
-    return;
-  }
-
-  const horairesSelectionnes = String(dispo.horairesDisponibles || "").split(",").map(h => h.trim()).filter(Boolean);
-
-  afficherMessageModalAvecContenu(
-    String(pseudo || "") + " — " + String(dispo.dateAffichage || ""),
-    function (zoneMessage) {
-      const statut = document.createElement("p");
-      const statutFort = document.createElement("strong");
-      statut.appendChild(document.createTextNode("Statut : "));
-      statutFort.textContent = String(dispo.statut || "-");
-      statut.appendChild(statutFort);
-      zoneMessage.appendChild(statut);
-
-      const zoneHoraires = document.createElement("div");
-      zoneHoraires.className = "horaires-modal";
-
-      if (
-        (dispo.statut === "Présent" || dispo.statut === "Remplaçant") &&
-        horairesSelectionnes.length > 0
-      ) {
-        horairesSelectionnes.forEach(function (horaire) {
-          const badge = document.createElement("span");
-          badge.className = "horaire-badge";
-          badge.textContent = "✅ " + horaire;
-          zoneHoraires.appendChild(badge);
-        });
-      } else {
-        const aucunHoraire = document.createElement("p");
-        aucunHoraire.textContent = "Aucun horaire disponible.";
-        zoneHoraires.appendChild(aucunHoraire);
-      }
-
-      zoneMessage.appendChild(zoneHoraires);
-    }
-  );
-}
-
-function calculerStatistiquesTableau(lignes) {
-  let presents = 0, absents = 0, remplacants = 0, nonRenseignes = 0, totalCases = 0;
-  lignes.forEach(l => l.disponibilites.forEach(d => { totalCases++; if (d.statut === "Présent") presents++; else if (d.statut === "Absent") absents++; else if (d.statut === "Remplaçant") remplacants++; else nonRenseignes++; }));
-  const casesRenseignees = totalCases - nonRenseignes;
-  return { presents, absents, remplacants, nonRenseignes, tauxReponse: totalCases === 0 ? 0 : Math.round((casesRenseignees / totalCases) * 100) };
-}
-
-function calculerStatistiquesParDate(dates, lignes) {
-  return dates.map(function (dateInfo) {
-    let presents = 0, absents = 0, remplacants = 0, nonRenseignes = 0;
-    lignes.forEach(function (ligne) {
-      const dispo = ligne.disponibilites.find(item => item.dateCompetition === dateInfo.dateCompetition);
-      const statut = dispo ? dispo.statut : "Non renseigné";
-      if (statut === "Présent") presents++; else if (statut === "Absent") absents++; else if (statut === "Remplaçant") remplacants++; else nonRenseignes++;
-    });
-    return { dateAffichage: dateInfo.dateAffichage, dateCompetition: dateInfo.dateCompetition, presents, absents, remplacants, nonRenseignes };
-  });
-}
-
-function calculerEffectifParHoraire(dates, lignes) {
-  return dates.map(function (dateInfo) {
-    const horairesDate = String(dateInfo.horaires || "").split(",").map(h => h.trim()).filter(Boolean);
-    const statsHoraires = horairesDate.map(function (horaire) {
-      let presents = 0, remplacants = 0, absents = 0, nonRenseignes = 0;
-      lignes.forEach(function (ligne) {
-        const dispo = ligne.disponibilites.find(item => item.dateCompetition === dateInfo.dateCompetition);
-        if (!dispo || dispo.statut === "Non renseigné") return nonRenseignes++;
-        if (dispo.statut === "Absent") return absents++;
-        if (dispo.statut === "Remplaçant") return remplacants++;
-        if (dispo.statut === "Présent") {
-          const horairesDispo = String(dispo.horairesDisponibles || "").split(",").map(h => h.trim()).filter(Boolean);
-          if (horairesDispo.includes(horaire)) presents++;
-        }
-      });
-      return { horaire, presents, remplacants, absents, nonRenseignes };
-    });
-    return { dateAffichage: dateInfo.dateAffichage, dateCompetition: dateInfo.dateCompetition, horaires: statsHoraires };
-  });
-}
-
-function creerStructureModal(titre) {
-  fermerModal();
-  const modal = document.createElement("div");
-  modal.id = "modal-overlay";
-  modal.setAttribute("role", "dialog");
-  modal.setAttribute("aria-modal", "true");
-  modal.setAttribute("aria-labelledby", "modal-title");
-
-  const boite = document.createElement("div");
-  boite.className = "modal-box";
-
-  const titreModal = document.createElement("h2");
-  titreModal.id = "modal-title";
-  titreModal.textContent = String(titre || "");
-  boite.appendChild(titreModal);
-
-  const zoneMessage = document.createElement("div");
-  zoneMessage.className = "modal-message";
-  boite.appendChild(zoneMessage);
-
-  const actions = document.createElement("div");
-  actions.className = "modal-actions";
-  boite.appendChild(actions);
-
-  modal.appendChild(boite);
-  document.body.appendChild(modal);
-
-  return { modal, zoneMessage, actions };
-}
-
-function afficherConfirmation(titre, message, actionConfirmer) {
-  const structure = creerStructureModal(titre);
-  const texte = document.createElement("p");
-  texte.textContent = String(message || "");
-  structure.zoneMessage.appendChild(texte);
-
-  const boutonAnnuler = document.createElement("button");
-  boutonAnnuler.type = "button";
-  boutonAnnuler.className = "secondary-button";
-  boutonAnnuler.textContent = "Annuler";
-  boutonAnnuler.addEventListener("click", fermerModal);
-
-  const boutonConfirmer = document.createElement("button");
-  boutonConfirmer.type = "button";
-  boutonConfirmer.id = "modal-confirm-button";
-  boutonConfirmer.textContent = "Confirmer";
-  boutonConfirmer.addEventListener("click", function () {
-    fermerModal();
-    if (typeof actionConfirmer === "function") actionConfirmer();
-  });
-
-  structure.actions.appendChild(boutonAnnuler);
-  structure.actions.appendChild(boutonConfirmer);
-  boutonConfirmer.focus();
-}
-
-function afficherMessageModalAvecContenu(titre, construireContenu, actionFermer) {
-  const structure = creerStructureModal(titre);
-  construireContenu(structure.zoneMessage);
-
-  const boutonFermer = document.createElement("button");
-  boutonFermer.type = "button";
-  boutonFermer.id = "modal-close-button";
-  boutonFermer.textContent = "OK";
-
-  function fermerEtContinuer() {
-    fermerModal();
-    if (typeof actionFermer === "function") actionFermer();
-  }
-
-  boutonFermer.addEventListener("click", fermerEtContinuer);
-  structure.modal.addEventListener("keydown", function (event) {
-    if (event.key === "Escape") fermerEtContinuer();
-  });
-  structure.actions.appendChild(boutonFermer);
-  boutonFermer.focus();
-}
-
-function afficherMessageModal(titre, message, actionFermer) {
-  afficherMessageModalAvecContenu(
-    titre,
-    function (zoneMessage) {
-      zoneMessage.textContent = String(message ?? "");
-    },
-    actionFermer
-  );
-}
-
-function fermerModal() {
-  const ancienneModal = document.getElementById("modal-overlay");
-  if (ancienneModal) ancienneModal.remove();
-}
-
-function journaliserResultatAPI(action, debut, succes) {
-  const nomAction = String(action || "action-inconnue")
-    .replace(/[^a-zA-Z0-9_.-]/g, "_")
-    .slice(0, 80);
-  const duree = Math.max(0, Math.round(performance.now() - debut));
-  const statut = succes ? "succes" : "echec";
-  const message = `SUPABASE | action=${nomAction} | statut=${statut} | duree=${duree} ms`;
-
-  if (succes) {
-    console.info(message);
-  } else {
-    console.error(message);
-  }
-}
-
-function appelAPI(action, parametres, callback) {
-  const debut = performance.now();
-
-  apiSupabase(action, parametres || {})
-    .then(function (reponse) {
-      journaliserResultatAPI(action, debut, true);
-      callback(reponse);
-    })
-    .catch(function () {
-      journaliserResultatAPI(action, debut, false);
-
-      callback({
-        succes: false,
-        message: "Erreur Supabase."
-      });
-    });
-}
-
-function appelAPISensible(action, parametres, callback) {
-  const debut = performance.now();
-
-  apiSupabase(action, parametres || {})
-    .then(function (reponse) {
-      journaliserResultatAPI(action, debut, true);
-      callback(reponse);
-    })
-    .catch(function () {
-      journaliserResultatAPI(action, debut, false);
-
-      callback({
-        succes: false,
-        message: "Erreur Supabase."
-      });
-    });
-}
-
-function formaterDateHeureFrance(valeur) {
-  if (!valeur) return "-";
-
-  const date = new Date(valeur);
-  if (Number.isNaN(date.getTime())) return "-";
-
-  const parties = new Intl.DateTimeFormat("fr-FR", {
-    timeZone: "Europe/Paris",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-  const valeurs = {};
-
-  parties.forEach(function (partie) {
-    valeurs[partie.type] = partie.value;
-  });
-
-  return `${valeurs.day}/${valeurs.month}/${valeurs.year} - ${valeurs.hour}:${valeurs.minute}:${valeurs.second}`;
-}
-
-function valeurDemandeDiscord(demande, cles, valeurDefaut = "") {
-  for (const cle of cles) {
-    if (demande && demande[cle] !== undefined && demande[cle] !== null && demande[cle] !== "") {
-      return demande[cle];
-    }
-  }
-
-  return valeurDefaut;
-}
-
-function filtrerDemandesLiaisonEnAttente(demandes) {
-  return (demandes || []).filter(function (demande) {
-    const statut = String(valeurDemandeDiscord(demande, ["statut", "status"], ""))
-      .trim()
-      .toLowerCase();
-
-    return !statut || statut === "en_attente_validation" || statut === "pending";
-  });
-}
-
-
-
-function normaliserStatutCompetitionFrontend(statut) {
-  return String(statut || "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
-
-function badgeStatutCompetitionHTML(statut) {
-  const statutNormalise = normaliserStatutCompetitionFrontend(statut);
-  const badges = {
-    ouverte: { classe: "status-open", texte: "🟢 Ouverte" },
-    brouillon: { classe: "status-draft", texte: "🟠 Brouillon" },
-    fermee: { classe: "status-closed", texte: "🔴 Fermée" },
-    archivee: { classe: "status-archived", texte: "⚫ Archivée" }
-  };
-
-  const badge = badges[statutNormalise] || {
-    classe: "status-unknown",
-    texte: statut || "Statut inconnu"
-  };
-
-  return `<span class="status-badge ${badge.classe}">${escapeHTML(badge.texte)}</span>`;
-}
-
-function getRolesUtilisateur() {
-  return String(utilisateurConnecte?.joueur?.roles || "")
-    .split(",")
-    .map(role => role.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function estOfficierConnecte() {
-  return getRolesUtilisateur().includes("officier");
-}
-
-function estSuperAdminConnecte() {
-  return getRolesUtilisateur().includes("superadmin");
-}
-
-function peutVoirCompetition(competition) {
-
-  const statut = normaliserStatutCompetitionFrontend(competition.statut);
-
-  if (statut === "archivee") {
-    return estSuperAdminConnecte();
-  }
-
-  if (statut === "brouillon") {
-    return estOfficierConnecte() || estSuperAdminConnecte();
-  }
-
-  return true;
-}
-
-function peutRemplirCompetition(competition) {
-
-  const statut = normaliserStatutCompetitionFrontend(competition.statut);
-
-  if (statut === "ouverte") {
+    State.definirUtilisateur(resultat);
+    afficherAccueilConnecte();
     return true;
   }
 
-  if (statut === "brouillon") {
-    return estOfficierConnecte() || estSuperAdminConnecte();
+  function afficherAccueilConnecte() {
+    const joueur = State.etat.utilisateur;
+    if (!joueur) return afficherConnexion();
+    State.etat.vue = "accueil";
+    const discordEtat = Discord.presentation(joueur);
+    const discord = UI.element("p", {
+      className: discordEtat.lie ? "discord-linked-state" : "discord-unlinked-state"
+    }, discordEtat.libelle);
+    const boutons = [UI.bouton("Consulter mes compétitions", afficherCompetitionsJoueur)];
+    if (!discordEtat.lie) {
+      boutons.push(UI.bouton("Lier mon compte Discord", afficherLiaisonDiscord, { className: "secondary-button" }));
+    }
+    boutons.push(UI.bouton("Modifier mon code d’accès", afficherChangerCodeAcces, { className: "secondary-button" }));
+    if (State.estOfficier()) {
+      boutons.push(UI.bouton("Accéder à l’espace officier", demanderAccesOfficier, { className: "secondary-button" }));
+    }
+    boutons.push(UI.bouton("Se déconnecter", deconnexion, { className: "secondary-button" }));
+    UI.afficher(UI.panneau("Accueil", [
+      UI.element("p", { className: "connected-user" }, "Connecté : " + joueur.pseudo),
+      UI.element("p", {}, "Rôles : " + (joueur.roles || "Aucun")),
+      discord,
+      UI.actions(boutons)
+    ]));
   }
 
-  return false;
-}
-
-function peutModifierCompetition(competition) {
-
-  const statut = normaliserStatutCompetitionFrontend(competition.statut);
-
-  if (statut === "brouillon") {
-    return estOfficierConnecte() || estSuperAdminConnecte();
+  function formulaireCredential(options) {
+    return new Promise(function (resoudre) {
+      const dialogue = global.MPPDialog.creer(options.titre, {
+        fermetureEchap: true,
+        onClose: function () { resoudre(null); }
+      });
+      const form = UI.element("form", { className: "dialog-form" });
+      const username = UI.element("input", {
+        type: "text",
+        name: "username",
+        value: State.etat.utilisateur?.pseudo || "",
+        autocomplete: "username",
+        readOnly: true,
+        tabIndex: -1,
+        ariaHidden: "true",
+        className: "visually-hidden"
+      });
+      const actuel = options.demanderActuel === false ? null : UI.champ({ id: "credential-current", name: "current-password", type: "password", label: options.libelleActuel, autocomplete: "current-password", required: true, maxLength: 256 });
+      const longueurMinimale = Number(options.longueurMinimale || 10);
+      const nouveau = UI.champ({ id: "credential-new", name: "new-password", type: "password", label: options.libelleNouveau, autocomplete: "new-password", required: true, minLength: longueurMinimale, maxLength: 256 });
+      const confirmation = UI.champ({ id: "credential-confirm", name: "new-password-confirmation", type: "password", label: "Confirmer", autocomplete: "new-password", required: true, minLength: longueurMinimale, maxLength: 256 });
+      const erreur = UI.element("p", { className: "error", role: "alert", hidden: true });
+      form.append(username);
+      if (actuel) form.appendChild(actuel.groupe);
+      form.append(nouveau.groupe, confirmation.groupe, erreur);
+      dialogue.contenu.appendChild(form);
+      const annuler = UI.bouton("Annuler", function () { nettoyer(); dialogue.fermer(); resoudre(null); }, { className: "secondary-button" });
+      const valider = UI.bouton("Modifier", function () { form.requestSubmit(); });
+      dialogue.actions.append(annuler, valider);
+      function nettoyer() {
+        if (actuel) actuel.controle.value = "";
+        nouveau.controle.value = "";
+        confirmation.controle.value = "";
+      }
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (nouveau.controle.value.length < longueurMinimale) {
+          erreur.textContent = options.messageTropCourt || "La nouvelle valeur doit contenir au moins 10 caractères.";
+          erreur.hidden = false;
+          return;
+        }
+        if (nouveau.controle.value !== confirmation.controle.value) {
+          erreur.textContent = "La confirmation ne correspond pas.";
+          erreur.hidden = false;
+          return;
+        }
+        const valeurs = { actuel: actuel?.controle.value || "", nouveau: nouveau.controle.value };
+        nettoyer();
+        dialogue.fermer();
+        resoudre(valeurs);
+      });
+      dialogue.focaliser(actuel?.controle || nouveau.controle);
+    });
   }
 
-  if (statut === "ouverte") {
-    return estOfficierConnecte() || estSuperAdminConnecte();
+  async function afficherChangerCodeAcces() {
+    const valeurs = await formulaireCredential({
+      titre: "Modifier le code d’accès",
+      libelleActuel: "Code d’accès actuel",
+      libelleNouveau: "Nouveau code d’accès",
+      messageTropCourt: "Le nouveau code d’accès doit contenir au moins 10 caractères."
+    });
+    if (!valeurs) return;
+    let codeActuel = valeurs.actuel;
+    let nouveauCode = valeurs.nouveau;
+    valeurs.actuel = "";
+    valeurs.nouveau = "";
+    UI.chargement("Modification du code d’accès…");
+    const resultat = await appelAPISensible("changerCodeAcces", { codeActuel, nouveauCode });
+    codeActuel = "";
+    nouveauCode = "";
+    if (!estSucces(resultat)) {
+      await UI.message("Modification refusée", resultat.message || "Le code d’accès n’a pas été modifié.");
+      afficherAccueilConnecte();
+      return;
+    }
+    State.effacer();
+    await UI.message("Code d’accès modifié", resultat.message || "Reconnectez-vous avec votre nouveau code.");
+    afficherConnexion();
   }
 
-  return false;
-}
-
-function peutSupprimerCompetition(competition) {
-  return estSuperAdminConnecte();
-}
-
-function afficherDemandeMotDePasseOfficier() {
-  definirModeCarte("normal");
-
-  const estSuperAdmin = estSuperAdminConnecte();
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>${estSuperAdmin ? "Accès Super Admin" : "Accès Officier"}</h2>
-
-      <p>Connecté : ${escapeHTML(utilisateurConnecte.joueur.pseudo)}</p>
-
-      ${champUsernameAutocomplete("usernameAccesOfficier")}
-
-      <label for="mdpOfficier">
-        ${estSuperAdmin ? "Mot de passe Super Admin" : "Mot de passe Officier"}
-      </label>
-
-      <input
-        type="password"
-        id="mdpOfficier"
-        name="password"
-        autocomplete="current-password"
-        placeholder="${estSuperAdmin ? "Mot de passe Super Admin" : "Mot de passe Officier"}"
-        onkeydown="if(event.key==='Enter'){verifierAccesOfficier();}"
-      >
-
-      <button onclick="verifierAccesOfficier()">Valider</button>
-
-      <button onclick="deconnexion()" class="secondary-button">
-        Retour
-      </button>
-
-      <p id="message"></p>
-    </div>
-  `);
-}
-
-function afficherChangerMotDePasse() {
-
-  setContenu(`
-    <div class="form-zone">
-
-      <h2>Changer mon mot de passe</h2>
-
-      ${champUsernameAutocomplete("usernameChangementMotDePasse")}
-
-      <label for="ancienMdp">Mot de passe actuel</label>
-      <input
-        type="password"
-        id="ancienMdp"
-        name="current-password"
-        autocomplete="current-password"
-        placeholder="Mot de passe actuel">
-
-      <label for="nouveauMdp">Nouveau mot de passe</label>
-      <input
-        type="password"
-        id="nouveauMdp"
-        name="new-password"
-        autocomplete="new-password"
-        placeholder="Nouveau mot de passe">
-
-      <label for="confirmationMdp">Confirmation</label>
-      <input
-        type="password"
-        id="confirmationMdp"
-        name="confirm-new-password"
-        autocomplete="new-password"
-        placeholder="Confirmation">
-
-      <button onclick="changerMotDePasse()">
-        Enregistrer
-      </button>
-
-      <button onclick="retourAccueilConnecte()" class="secondary-button">
-        Annuler
-      </button>
-
-    </div>
-  `);
-}
-
-function changerMotDePasse() {
-  const ancienMdp = document.getElementById("ancienMdp").value;
-  const nouveauMdp = document.getElementById("nouveauMdp").value;
-  const confirmationMdp = document.getElementById("confirmationMdp").value;
-
-  let message = document.getElementById("message");
-
-  if (!message) {
-    message = document.createElement("p");
-    message.id = "message";
-    document.querySelector(".form-zone").appendChild(message);
+  async function afficherCompetitionsJoueur() {
+    UI.chargement("Chargement des compétitions…");
+    const resultat = await appelAPI("chargerCompetitions", { portee: "joueur" });
+    if (!estSucces(resultat)) return afficherErreurPage(resultat.message, afficherAccueilConnecte);
+    const liste = UI.element("div", { className: "competition-list" });
+    (resultat.competitions || []).forEach(function (competition) {
+      liste.appendChild(UI.element("article", { className: "competition-card" }, [
+        UI.element("h3", {}, competition.nom || "Compétition"),
+        UI.element("p", {}, "Statut : " + (competition.statut || "-")),
+        UI.element("p", {}, competition.description || ""),
+        UI.actions([UI.bouton("Ouvrir", function () { afficherPresenceCompetition(competition); })])
+      ]));
+    });
+    if (!liste.children.length) liste.appendChild(UI.element("p", {}, "Aucune compétition disponible."));
+    UI.afficher(UI.panneau("Mes compétitions", [liste, UI.actions([
+      UI.bouton("Retour", afficherAccueilConnecte, { className: "secondary-button" })
+    ])]));
   }
 
-  if (!ancienMdp || !nouveauMdp || !confirmationMdp) {
-    message.textContent = "Merci de remplir tous les champs.";
-    message.style.color = "#ff5555";
-    return;
-  }
-
-  if (nouveauMdp !== confirmationMdp) {
-    message.textContent = "Les deux nouveaux mots de passe ne correspondent pas.";
-    message.style.color = "#ff5555";
-    return;
-  }
-
-  message.textContent = "Modification en cours...";
-  message.style.color = "#CFCFCF";
-
-  changerMotDePasseSupabase(
-    utilisateurConnecte.joueur.pseudo,
-    ancienMdp,
-    nouveauMdp
-  )
-    .then(function (data) {
-      if (!data.succes) {
-        message.textContent = data.message;
-        message.style.color = "#ff5555";
+  async function afficherPresenceCompetition(competition) {
+    UI.chargement("Chargement de vos présences…");
+    const resultat = await appelAPI("chargerCompetitionComplete", { idCompetition: competition.id });
+    if (!estSucces(resultat)) return afficherErreurPage(resultat.message, afficherCompetitionsJoueur);
+    const index = new Map((resultat.presences || []).map(function (presence) {
+      return [presence.dateCompetition, presence];
+    }));
+    const formulaire = UI.element("form", { className: "presence-form" });
+    const controles = [];
+    (resultat.dates || []).forEach(function (date) {
+      const presence = index.get(date.dateCompetition) || { statut: "Non renseigné", horairesDisponibles: "" };
+      const statut = UI.select({
+        id: "presence-status-" + date.idDate,
+        label: date.dateAffichage,
+        value: presence.statut,
+        options: Presences.statuts.map(function (valeur) { return { value: valeur, label: valeur }; })
+      });
+      const horairesChoisis = new Set(Presences.horaires(presence.horairesDisponibles));
+      const horaires = Presences.horaires(date.horaires);
+      const zoneHoraires = UI.element("fieldset", { className: "schedule-options" }, UI.element("legend", {}, "Horaires disponibles"));
+      const cases = [];
+      horaires.forEach(function (horaire, position) {
+        const caseHoraire = UI.caseACocher("horaire-" + date.idDate + "-" + position, horaire, horairesChoisis.has(horaire));
+        cases.push({ horaire, controle: caseHoraire.controle });
+        zoneHoraires.appendChild(caseHoraire.groupe);
+      });
+      if (!horaires.length) zoneHoraires.appendChild(UI.element("p", {}, "Aucun horaire spécifique."));
+      const initiale = Presences.valeurControle({ date, statut: statut.controle, cases });
+      const controle = { date, statut: statut.controle, cases, initiale };
+      function synchroniserHoraires() {
+        const autorises = Presences.autoriseHoraires(statut.controle.value) && resultat.peutRemplir !== false;
+        cases.forEach(function (item) {
+          item.controle.disabled = !autorises;
+          if (!autorises) item.controle.checked = false;
+        });
+        zoneHoraires.classList.toggle("schedule-options-disabled", !autorises);
+      }
+      statut.controle.disabled = resultat.peutRemplir === false;
+      statut.controle.addEventListener("change", synchroniserHoraires);
+      synchroniserHoraires();
+      controles.push(controle);
+      formulaire.appendChild(UI.element("section", { className: "presence-date-row" }, [statut.groupe, zoneHoraires]));
+    });
+    const erreur = UI.element("p", { className: "error", role: "alert", hidden: true });
+    formulaire.append(erreur, UI.actions([
+      UI.bouton("Enregistrer", null, { type: "submit", disabled: resultat.peutRemplir === false }),
+      UI.bouton("Retour", afficherCompetitionsJoueur, { className: "secondary-button" })
+    ]));
+    formulaire.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      const presences = Presences.construirePayload(controles);
+      const disponibiliteIncomplete = controles.some(function (controle) {
+        return Presences.autoriseHoraires(controle.statut.value) &&
+          controle.cases.length > 0 &&
+          !controle.cases.some(function (item) { return item.controle.checked; });
+      });
+      if (disponibiliteIncomplete) {
+        erreur.textContent = "Sélectionnez au moins un horaire pour chaque présence ou remplacement.";
+        erreur.hidden = false;
         return;
       }
-
-      message.textContent = data.message;
-      message.style.color = "#8dff8d";
-
-      setTimeout(function () {
-        afficherChoixOfficier();
-      }, 1000);
-    })
-    .catch(function () {
-      console.error("Changement du mot de passe impossible : erreur inattendue.");
-      message.textContent = "Erreur lors du changement de mot de passe.";
-      message.style.color = "#ff5555";
-    });
-}
-
-function gererAffichageFermetureAuto() {
-  const modeFermetureAuto = document.getElementById("modeFermetureAuto");
-  const zoneFermetureAuto = document.getElementById("zoneFermetureAuto");
-
-  if (!modeFermetureAuto || !zoneFermetureAuto) {
-    return;
-  }
-
-  if (modeFermetureAuto.value === "oui") {
-    zoneFermetureAuto.style.display = "";
-  } else {
-    zoneFermetureAuto.style.display = "none";
-  }
-}
-
-function gererAffichageRappelPresence() {
-  const modeRappelPresence = document.getElementById("modeRappelPresence");
-  const zoneRappelPresence = document.getElementById("zoneRappelPresence");
-
-  if (!modeRappelPresence || !zoneRappelPresence) {
-    return;
-  }
-
-  if (modeRappelPresence.value === "oui") {
-    zoneRappelPresence.style.display = "";
-  } else {
-    zoneRappelPresence.style.display = "none";
-  }
-}
-
-function afficherFormulaireModificationCompetition(competitionJSON) {
-  definirModeCarte("large");
-
-  const competition = JSON.parse(competitionJSON);
-
-  const rolesActuels = String(competition.rolesAutorises || "");
-
-  const fermetureAutoActive =
-    competition.fermetureAutoActive === true ||
-    competition.fermetureAutoActive === "true";
-
-  const notificationPresenceActive =
-    competition.notificationPresenceActive === true ||
-    competition.notificationPresenceActive === "true";
-
-  const rappelPresenceActive =
-    competition.rappelPresenceActive === true ||
-    competition.rappelPresenceActive === "true";
-
-  competitionModificationInitiale = normaliserCompetitionModification({
-    nom: competition.nom,
-    description: competition.description || "",
-    statut: competition.statut || "Brouillon",
-    rolesAutorises: rolesActuels,
-    fermetureAutoActive: fermetureAutoActive,
-    heureOuvertureAuto: competition.heureOuverture || "",
-    heureFermetureAuto: competition.heureFermeture || "",
-    notificationPresenceActive: notificationPresenceActive,
-    heureNotificationPresence: competition.heureNotificationPresence || "",
-    rappelPresenceActive: rappelPresenceActive,
-    heureRappelPresence: competition.heureRappelPresence || ""
-  });
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>Modifier une compétition</h2>
-
-      <div class="stats-box">
-        <h3>1. Informations générales</h3>
-
-        <label for="modifierNomCompetition">Nom de la compétition</label>
-        <input
-          type="text"
-          id="modifierNomCompetition"
-          value="${escapeHTML(competition.nom)}"
-        >
-
-        <label for="modifierDescriptionCompetition">Description</label>
-        <input
-          type="text"
-          id="modifierDescriptionCompetition"
-          value="${escapeHTML(competition.description || "")}"
-        >
-
-        <label>Rôles autorisés</label>
-        <div class="roles-selection">
-          <label class="checkbox-role">
-            <input type="checkbox" id="modifierRoleOfficier" ${rolesActuels.includes("Officier") ? "checked" : ""}>
-            Officier
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" id="modifierRoleStrateur" ${rolesActuels.includes("Strateur") ? "checked" : ""}>
-            Strateur
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" id="modifierRoleSoldat" ${rolesActuels.includes("Soldat") ? "checked" : ""}>
-            Soldat
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" id="modifierRoleReserviste" ${rolesActuels.includes("Réserviste") ? "checked" : ""}>
-            Réserviste
-          </label>
-
-          <label class="checkbox-role">
-            <input type="checkbox" id="modifierRoleRecrue" ${rolesActuels.includes("Recrue") ? "checked" : ""}>
-            Recrue
-          </label>
-        </div>
-
-        <label for="modifierStatutCompetition">Statut</label>
-        <select id="modifierStatutCompetition">
-          <option value="Brouillon" ${competition.statut === "Brouillon" ? "selected" : ""}>Brouillon</option>
-          <option value="Ouverte" ${competition.statut === "Ouverte" ? "selected" : ""}>Ouverte</option>
-          <option value="Fermée" ${competition.statut === "Fermée" ? "selected" : ""}>Fermée</option>
-          <option value="Archivée" ${competition.statut === "Archivée" ? "selected" : ""}>Archivée</option>
-        </select>
-      </div>
-
-      <div class="stats-box">
-        <h3>2. Dates</h3>
-        <p>
-          Les dates sont gérées séparément pour éviter de supprimer ou recréer accidentellement les présences déjà enregistrées.
-        </p>
-
-        <button
-          onclick="afficherGestionDatesCompetition(${Number(competition.id)}, '${jsString(competition.nom)}')"
-          class="secondary-button">
-          📅 Gérer les dates
-        </button>
-      </div>
-
-      <div class="stats-box">
-        <h3>3. Ouverture / fermeture automatique</h3>
-
-        <label for="modifierModeFermetureAuto">Mode</label>
-        <select id="modifierModeFermetureAuto" onchange="gererAffichageModificationFermetureAuto()">
-          <option value="non" ${!fermetureAutoActive ? "selected" : ""}>
-            Pas de fermeture automatique
-          </option>
-          <option value="oui" ${fermetureAutoActive ? "selected" : ""}>
-            Horaires de fermeture
-          </option>
-        </select>
-
-        <div id="modifierZoneFermetureAuto" style="${fermetureAutoActive ? "" : "display:none;"}">
-          <label for="modifierHeureOuvertureAuto">Heure d'ouverture automatique</label>
-          <input
-            type="time"
-            id="modifierHeureOuvertureAuto"
-            value="${escapeHTML(competition.heureOuverture || "08:00")}"
-          >
-
-          <label for="modifierHeureFermetureAuto">Heure de fermeture automatique</label>
-          <input
-            type="time"
-            id="modifierHeureFermetureAuto"
-            value="${escapeHTML(competition.heureFermeture || "20:00")}"
-          >
-
-          <p>
-            La règle sera active uniquement entre la première et la dernière date de la compétition.
-          </p>
-        </div>
-      </div>
-
-      <div class="stats-box">
-        <h3>4. Notification Discord des présences</h3>
-
-        <label for="modifierModeNotificationPresence">Mode</label>
-        <select id="modifierModeNotificationPresence" onchange="gererAffichageModificationNotificationPresence()">
-          <option value="non" ${!notificationPresenceActive ? "selected" : ""}>
-            Pas de notification
-          </option>
-          <option value="oui" ${notificationPresenceActive ? "selected" : ""}>
-            Notification automatique
-          </option>
-        </select>
-
-        <div id="modifierZoneNotificationPresence" style="${notificationPresenceActive ? "" : "display:none;"}">
-          <label for="modifierHeureNotificationPresence">Heure de notification</label>
-          <input
-            type="time"
-            id="modifierHeureNotificationPresence"
-            value="${escapeHTML(competition.heureNotificationPresence || "20:00")}"
-          >
-
-          <p>
-            À l'heure choisie, un message sera envoyé dans le salon staff Discord avec le nombre de présents et remplaçants du jour.
-            Si plusieurs horaires existent, le détail sera précisé par horaire.
-          </p>
-        </div>
-      </div>
-
-      <div class="stats-box">
-        <h3>5. Rappel Discord des présences</h3>
-
-        <label for="modifierModeRappelPresence">Mode</label>
-        <select id="modifierModeRappelPresence" onchange="gererAffichageModificationRappelPresence()">
-          <option value="non" ${!rappelPresenceActive ? "selected" : ""}>
-            Pas de rappel
-          </option>
-          <option value="oui" ${rappelPresenceActive ? "selected" : ""}>
-            Rappel automatique des joueurs sans réponse
-          </option>
-        </select>
-
-        <div id="modifierZoneRappelPresence" style="${rappelPresenceActive ? "" : "display:none;"}">
-          <label for="modifierHeureRappelPresence">Heure du rappel</label>
-          <input
-            type="time"
-            id="modifierHeureRappelPresence"
-            value="${escapeHTML(competition.heureRappelPresence || "17:00")}"
-          >
-
-          <p>
-            À l'heure choisie, les joueurs actifs qui n'ont pas encore renseigné leurs présences du jour seront relancés sur Discord.
-          </p>
-        </div>
-      </div>
-
-      <button onclick="previsualiserModificationCompetition(${Number(competition.id)})">
-        Prévisualiser les modifications
-      </button>
-
-      <button onclick="afficherGestionCompetitions()" class="secondary-button">
-        Annuler
-      </button>
-    </div>
-  `);
-}
-
-function gererAffichageModificationFermetureAuto() {
-  const modeFermetureAuto = document.getElementById("modifierModeFermetureAuto");
-  const zoneFermetureAuto = document.getElementById("modifierZoneFermetureAuto");
-
-  if (!modeFermetureAuto || !zoneFermetureAuto) {
-    return;
-  }
-
-  if (modeFermetureAuto.value === "oui") {
-    zoneFermetureAuto.style.display = "";
-  } else {
-    zoneFermetureAuto.style.display = "none";
-  }
-}
-
-function recupererRolesModificationCompetition() {
-  const roles = [];
-
-  if (document.getElementById("modifierRoleOfficier").checked) roles.push("Officier");
-  if (document.getElementById("modifierRoleStrateur").checked) roles.push("Strateur");
-  if (document.getElementById("modifierRoleSoldat").checked) roles.push("Soldat");
-  if (document.getElementById("modifierRoleReserviste").checked) roles.push("Réserviste");
-  if (document.getElementById("modifierRoleRecrue").checked) roles.push("Recrue");
-
-  return roles;
-}
-
-function previsualiserModificationCompetition(idCompetition) {
-  const nom = document.getElementById("modifierNomCompetition").value.trim();
-  const description = document.getElementById("modifierDescriptionCompetition").value.trim();
-  const statut = document.getElementById("modifierStatutCompetition").value;
-
-  const modeFermetureAuto =
-    document.getElementById("modifierModeFermetureAuto")?.value || "non";
-
-  const fermetureAutoActive =
-    modeFermetureAuto === "oui";
-
-  const heureOuvertureAuto =
-    document.getElementById("modifierHeureOuvertureAuto")?.value || "";
-
-  const heureFermetureAuto =
-    document.getElementById("modifierHeureFermetureAuto")?.value || "";
-
-  const modeNotificationPresence =
-    document.getElementById("modifierModeNotificationPresence")?.value || "non";
-
-  const notificationPresenceActive =
-    modeNotificationPresence === "oui";
-
-  const heureNotificationPresence =
-    document.getElementById("modifierHeureNotificationPresence")?.value || "";
-
-  const modeRappelPresence =
-    document.getElementById("modifierModeRappelPresence")?.value || "non";
-
-  const rappelPresenceActive =
-    modeRappelPresence === "oui";
-
-  const heureRappelPresence =
-    rappelPresenceActive
-      ? document.getElementById("modifierHeureRappelPresence")?.value || ""
-      : "";
-
-  const roles = recupererRolesModificationCompetition();
-
-  if (!nom) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de saisir un nom de compétition."
-    );
-  }
-
-  if (roles.length === 0) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de sélectionner au moins un rôle autorisé."
-    );
-  }
-
-  if (
-    fermetureAutoActive &&
-    (!heureOuvertureAuto || !heureFermetureAuto)
-  ) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de renseigner une heure d'ouverture et une heure de fermeture automatique."
-    );
-  }
-
-  if (
-    notificationPresenceActive &&
-    !heureNotificationPresence
-  ) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de renseigner une heure de notification des présences."
-    );
-  }
-
-  if (
-    rappelPresenceActive &&
-    !heureRappelPresence
-  ) {
-    return afficherMessageModal(
-      "Erreur",
-      "Merci de renseigner une heure de rappel Discord des présences."
-    );
-  }
-
-  const config = {
-    idCompetition: idCompetition,
-    nom: nom,
-    description: description,
-    statut: statut,
-    rolesAutorises: roles.join(","),
-    fermetureAutoActive: fermetureAutoActive,
-    heureOuvertureAuto: heureOuvertureAuto,
-    heureFermetureAuto: heureFermetureAuto,
-    notificationPresenceActive: notificationPresenceActive,
-    heureNotificationPresence: heureNotificationPresence,
-    rappelPresenceActive: rappelPresenceActive,
-    heureRappelPresence: heureRappelPresence
-  };
-
-  config.changements = comparerModificationCompetition(config);
-  config.aucuneModification = config.changements.length === 0;
-
-  afficherRecapModificationCompetition(config);
-}
-
-function afficherRecapModificationCompetition(config) {
-  definirModeCarte("large");
-
-  const changements = Array.isArray(config.changements)
-    ? config.changements
-    : comparerModificationCompetition(config);
-
-  setContenu(`
-    <div class="form-zone">
-      <h2>Prévisualisation des modifications</h2>
-
-      <div class="stats-box">
-        <h3>${escapeHTML(config.nom)}</h3>
-
-        ${rendreLignesChangements(changements)}
-      </div>
-
-      ${changements.length > 0
-        ? `<button onclick='confirmerModificationCompetition(${jsonPourAttribut(JSON.stringify(config))})'>
-            Confirmer les modifications
-          </button>`
-        : ""}
-
-      <button onclick="afficherGestionCompetitions()" class="secondary-button">
-        Annuler
-      </button>
-    </div>
-  `);
-}
-
-function confirmerModificationCompetition(configJSON) {
-  const config = JSON.parse(configJSON);
-  const changements = Array.isArray(config.changements)
-    ? config.changements
-    : comparerModificationCompetition(config);
-
-  if (changements.length === 0) {
-    afficherMessageModal(
-      "Aucune modification détectée",
-      "Aucune sauvegarde n'a été effectuée.",
-      afficherGestionCompetitions
-    );
-    return;
-  }
-
-  demanderMotDePasseActionSensible(
-    "Confirmer les modifications",
-    "Entre ton mot de passe officier pour modifier cette compétition.",
-    function (motDePasse) {
-      appelAPISensible(
-        "modifierCompetitionComplete",
-        {
-          config: JSON.stringify(config),
-          utilisateur: utilisateurConnecte.joueur.pseudo,
-          motDePasse
-        },
-        function(data) {
-          if (!data.succes) {
-            return afficherMessageModal("Erreur", data.message);
-          }
-
-          viderCacheFrontend();
-
-          afficherMessageModal(
-            "Compétition modifiée",
-            "La compétition a bien été mise à jour.",
-            afficherGestionCompetitions
-          );
-        }
+      if (!presences.length) {
+        UI.statut("Aucune modification à enregistrer.", "info");
+        return;
+      }
+      const confirme = await UI.confirmer(
+        "Confirmer les présences",
+        "Enregistrer " + presences.length + " modification" + (presences.length > 1 ? "s" : "") + " pour cette compétition ?",
+        "Enregistrer"
       );
+      if (!confirme) return;
+      UI.chargement("Enregistrement des présences…");
+      const sauvegarde = await appelAPI("sauvegarderPresences", { idCompetition: competition.id, presences: JSON.stringify(presences) });
+      if (!estSucces(sauvegarde)) return afficherErreurPage(sauvegarde.message, function () { afficherPresenceCompetition(competition); });
+      await UI.message("Présences enregistrées", sauvegarde.message || "Vos disponibilités sont à jour.");
+      afficherCompetitionsJoueur();
+    });
+    UI.afficher(UI.panneau(competition.nom || "Présences", [
+      UI.element("p", {}, resultat.peutRemplir === false ? "Cette compétition est fermée à la saisie." : "Renseignez vos disponibilités."),
+      formulaire
+    ]));
+  }
+
+  async function afficherLiaisonDiscord() {
+    const zone = UI.element("div", { className: "discord-link-zone" });
+    const generer = UI.bouton("Générer un code de liaison", async function () {
+      generer.disabled = true;
+      zone.replaceChildren(UI.element("p", { role: "status" }, "Génération du code…"));
+      const resultat = await appelAPI("genererCodeLiaisonDiscord");
+      generer.disabled = false;
+      if (!estSucces(resultat)) {
+        zone.replaceChildren(UI.element("p", { className: "error", role: "alert" }, resultat.message || "Code indisponible."));
+        return;
+      }
+      const code = String(resultat.code || resultat.linkingCode || "");
+      if (!code) {
+        zone.replaceChildren(UI.element("p", { className: "error" }, "Le serveur n’a pas retourné de code."));
+        return;
+      }
+      const codeElement = UI.element("code", { className: "discord-link-code" }, code);
+      const copier = UI.bouton("Copier", async function () {
+        try { await navigator.clipboard.writeText(code); UI.statut("Code copié.", "success"); }
+        catch (_erreur) { UI.statut("Copie impossible. Sélectionnez le code.", "error"); }
+      }, { className: "secondary-button" });
+      zone.replaceChildren(UI.element("p", {}, "Utilisez ce code avec la commande Discord /lier."), codeElement, copier);
+    });
+    UI.afficher(UI.panneau("Liaison Discord", [zone, UI.actions([
+      generer,
+      UI.bouton("Retour", afficherAccueilConnecte, { className: "secondary-button" })
+    ])]));
+  }
+
+  async function demanderAccesOfficier() {
+    if (!State.estOfficier()) return UI.message("Accès refusé", "Ce compte n’a pas de rôle officier.");
+    let motDePasse = await UI.demanderMotDePasse(
+      "Accès officier",
+      "Validez votre accès pour ouvrir une session administrative courte.",
+      State.etat.utilisateur?.pseudo
+    );
+    if (!motDePasse) return;
+    UI.chargement("Validation de l’accès officier…");
+    const resultat = await appelAPISensible("verifierMotDePasse", {
+      pseudo: State.etat.utilisateur?.pseudo,
+      motDePasse
+    });
+    motDePasse = "";
+    if (!estSucces(resultat)) {
+      await UI.message("Accès refusé", resultat.message || "Authentification impossible.");
+      afficherAccueilConnecte();
+      return;
     }
-  );
-}
-
-function normaliserTexteGestionJoueurs(valeur) {
-  return String(valeur || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function statutGestionJoueur(joueur) {
-  const statutNormalise = normaliserTexteGestionJoueurs(joueur?.statut);
-
-  if (statutNormalise === "actif") return "Actif";
-  if (statutNormalise === "inactif") return "Inactif";
-  if (statutNormalise === "suspendu") return "Suspendu";
-
-  return String(joueur?.statut || "-");
-}
-
-function calculerPrioriteGrade(roles) {
-  const texteRoles = normaliserTexteGestionJoueurs(roles);
-  const indexGrade = ORDRE_GRADES_JOUEURS.findIndex(function (grade) {
-    return texteRoles.includes(grade);
-  });
-
-  return indexGrade === -1 ? 99 : indexGrade + 1;
-}
-
-function comparerJoueursGestion(a, b) {
-  const direction = triGestionJoueurs.direction === "desc" ? -1 : 1;
-  const pseudoA = String(a.pseudo || "");
-  const pseudoB = String(b.pseudo || "");
-  const comparaisonPseudo = pseudoA.localeCompare(pseudoB, "fr", { sensitivity: "base" });
-
-  if (triGestionJoueurs.colonne === "grade") {
-    const comparaisonGrade = calculerPrioriteGrade(a.roles) - calculerPrioriteGrade(b.roles);
-    return comparaisonGrade !== 0 ? comparaisonGrade * direction : comparaisonPseudo;
+    State.definirAccesAdmin(resultat);
+    afficherEspaceOfficier();
   }
 
-  return comparaisonPseudo * direction;
-}
+  async function afficherEspaceOfficier() {
+    if (!State.etat.accesAdmin) return demanderAccesOfficier();
+    UI.chargement("Chargement du tableau de bord…");
+    const resultat = await appelAPI("chargerDonneesOfficierInitiales");
+    if (!estSucces(resultat)) return gererErreurAdmin(resultat, afficherAccueilConnecte);
+    const stats = UI.element("div", { className: "dashboard-grid" }, [
+      carteStat("Joueurs actifs", resultat.joueurs?.actifs || 0),
+      carteStat("Connexions 7 jours", resultat.joueurs?.connectes7Jours || 0),
+      carteStat("Compétitions ouvertes", resultat.competitions?.ouvertes || 0),
+      carteStat("Compétitions fermées", resultat.competitions?.fermees || 0)
+    ]);
+    const actions = [
+      UI.bouton("Présences du jour", afficherAujourdHuiOfficier),
+      UI.bouton("Consulter les présences", afficherSelectionCompetitionOfficier),
+      UI.bouton("Gestion des joueurs", afficherGestionJoueurs, { className: "secondary-button" }),
+      UI.bouton("Gestion des compétitions", afficherGestionCompetitions, { className: "secondary-button" }),
+      UI.bouton("Journal d’activité", afficherJournalActivite, { className: "secondary-button" }),
+      UI.bouton("Modifier mon mot de passe", afficherChangerMotDePasseAdmin, { className: "secondary-button" })
+    ];
+    if (estSuperAdminConnecte()) actions.push(UI.bouton("Demandes Discord", afficherDemandesLiaisonDiscord, { className: "secondary-button" }));
+    actions.push(UI.bouton("Retour à l’accueil", afficherAccueilConnecte, { className: "secondary-button" }));
+    UI.afficher(UI.panneau("Espace officier", [stats, UI.actions(actions)]));
+  }
 
-function gestionJoueursEtatActif() {
-  const recherche = String(document.getElementById("rechercheJoueur")?.value || "").trim();
+  function carteStat(libelle, valeur) {
+    return UI.element("article", { className: "stat-card" }, [
+      UI.element("strong", { className: "stat-value" }, String(valeur)),
+      UI.element("span", { className: "stat-label" }, libelle)
+    ]);
+  }
 
-  return recherche !== "" ||
-    triGestionJoueurs.colonne !== "pseudo" ||
-    triGestionJoueurs.direction !== "asc" ||
-    filtresStatutGestionJoueurs.size !== STATUTS_GESTION_JOUEURS.length;
-}
-
-function mettreAJourBoutonResetGestionJoueurs() {
-  const bouton = document.getElementById("resetGestionJoueurs");
-  if (!bouton) return;
-  bouton.hidden = !gestionJoueursEtatActif();
-}
-
-function appliquerFiltresGestionJoueurs() {
-  const recherche = normaliserTexteGestionJoueurs(
-    document.getElementById("rechercheJoueur")?.value || ""
-  ).trim();
-
-  const joueursFiltres = joueursGestionCache
-    .filter(function (joueur) {
-      const pseudo = normaliserTexteGestionJoueurs(joueur.pseudo);
-      const statut = statutGestionJoueur(joueur);
-
-      return pseudo.includes(recherche) && filtresStatutGestionJoueurs.has(statut);
-    })
-    .sort(comparerJoueursGestion);
-
-  afficherTableauGestionJoueurs(joueursFiltres);
-  mettreAJourBoutonResetGestionJoueurs();
-}
-
-function definirTriGestionJoueurs(colonne) {
-  if (triGestionJoueurs.colonne === colonne) {
-    triGestionJoueurs.direction = triGestionJoueurs.direction === "asc" ? "desc" : "asc";
-  } else {
-    triGestionJoueurs = {
-      colonne: colonne,
-      direction: "asc"
+  function libelleStatutRappel(statut) {
+    const libelles = {
+      envoye: "Rappel envoyé",
+      aucun_joueur: "Aucun joueur à relancer",
+      erreur: "Erreur d’envoi",
+      en_cours: "Envoi en cours",
+      pas_encore_envoye: "En attente de l’heure programmée",
+      indisponible: "Statut indisponible"
     };
+    return libelles[String(statut || "").toLowerCase()] || "En attente de l’heure programmée";
   }
 
-  appliquerFiltresGestionJoueurs();
-}
-
-function selectionnerStatutsGestionJoueurs(toutSelectionner) {
-  filtresStatutGestionJoueurs = toutSelectionner
-    ? new Set(STATUTS_GESTION_JOUEURS)
-    : new Set();
-
-  appliquerFiltresGestionJoueurs();
-}
-
-function changerFiltreStatutGestionJoueurs(statut, actif) {
-  if (actif) {
-    filtresStatutGestionJoueurs.add(statut);
-  } else {
-    filtresStatutGestionJoueurs.delete(statut);
+  function gererErreurAdmin(resultat, retour) {
+    if (resultat?.code === "SESSION_EXPIREE" || resultat?.porteeSession === "admin") {
+      State.etat.accesAdmin = false;
+      State.etat.estSuperAdmin = false;
+      global.MPPSession.effacerSessionAdmin();
+    }
+    afficherErreurPage(resultat?.message || "Action officier indisponible.", retour || afficherAccueilConnecte);
   }
 
-  appliquerFiltresGestionJoueurs();
-}
+  function afficherErreurPage(message, retour) {
+    const actionRetour = State.etat.utilisateur ? (retour || afficherAccueilConnecte) : afficherConnexion;
+    UI.afficher(UI.panneau("Une action n’a pas abouti", [
+      UI.element("p", { className: "error", role: "alert" }, message || "Erreur inattendue."),
+      UI.actions([UI.bouton("Retour", actionRetour, { className: "secondary-button" })])
+    ]));
+  }
 
-function reinitialiserVueGestionJoueurs() {
-  const champRecherche = document.getElementById("rechercheJoueur");
-  if (champRecherche) champRecherche.value = "";
+  async function afficherGestionJoueurs() {
+    if (!State.etat.accesAdmin) return demanderAccesOfficier();
+    UI.chargement("Chargement des joueurs…");
+    const resultat = await appelAPI("chargerJoueurs");
+    if (!estSucces(resultat)) return gererErreurAdmin(resultat);
+    const joueurs = resultat.joueurs || [];
+    const recherche = UI.champ({ id: "players-search", label: "Rechercher", placeholder: "Pseudo ou rôle" });
+    const statut = UI.select({ id: "players-status", label: "Statut", value: "Tous", options: ["Tous", ...Joueurs.statuts].map(function (v) { return { value: v, label: v }; }) });
+    const zone = UI.element("div");
+    let triAscendant = true;
+    function rendre() {
+      const filtreStatut = statut.controle.value;
+      const filtres = Joueurs.filtrerEtTrier(joueurs, recherche.controle.value, filtreStatut, triAscendant);
+      const lignes = filtres.map(function (joueur) {
+        const pseudo = UI.element("span", { className: "player-name-layout" }, [
+          UI.element("span", {}, joueur.pseudo),
+          joueur.discordLie ? UI.element("span", { className: "discord-badge", title: Discord.presentation(joueur).titreBadge, ariaLabel: "Discord lié" }, "D") : null
+        ]);
+        const actions = [UI.bouton("Modifier", function () { afficherFormulaireJoueur(joueur); }, { className: "secondary-button" })];
+        if (estSuperAdminConnecte()) actions.push(UI.bouton("Supprimer", function () { supprimerJoueur(joueur); }, { className: "danger-button" }));
+        return [pseudo, joueur.roles || "", joueur.statut || "", UI.formaterDate(joueur.derniereConnexion), UI.actions(actions)];
+      });
+      zone.replaceChildren(UI.tableau([{
+        contenu: UI.bouton("Pseudo " + (triAscendant ? "↑" : "↓"), function () { triAscendant = !triAscendant; rendre(); }, {
+          className: "table-sort-button",
+          ariaLabel: "Trier les joueurs par pseudo, ordre " + (triAscendant ? "décroissant" : "croissant")
+        }),
+        libelle: "Pseudo",
+        attributs: { ariaSort: triAscendant ? "ascending" : "descending" }
+      },
+        "Rôles", "Statut", "Dernière connexion", "Actions"
+      ], lignes, { caption: "Liste des joueurs" }));
+    }
+    recherche.controle.addEventListener("input", rendre);
+    statut.controle.addEventListener("change", rendre);
+    rendre();
+    UI.afficher(UI.panneau("Gestion des joueurs", [
+      UI.element("div", { className: "filters-row" }, [recherche.groupe, statut.groupe]),
+      zone,
+      UI.actions([
+        UI.bouton("Ajouter un joueur", function () { afficherFormulaireJoueur(null); }),
+        UI.bouton("Retour", afficherEspaceOfficier, { className: "secondary-button" })
+      ])
+    ]));
+  }
 
-  triGestionJoueurs = {
-    colonne: "pseudo",
-    direction: "asc"
-  };
-  filtresStatutGestionJoueurs = new Set(STATUTS_GESTION_JOUEURS);
+  function controlesRoles(rolesActuels, options) {
+    const actifs = new Set(Joueurs.listeRoles(rolesActuels).map(Joueurs.normaliser));
+    const controles = [];
+    const rolesMasques = [];
+    const fieldset = UI.element("fieldset", { className: "role-options" }, UI.element("legend", {}, "Rôles"));
+    Joueurs.roles.forEach(function (role, index) {
+      if (role === "SuperAdmin" && !estSuperAdminConnecte()) {
+        if (options?.preserverRolesMasques === true && actifs.has(Joueurs.normaliser(role))) rolesMasques.push(role);
+        return;
+      }
+      const item = UI.caseACocher("role-" + index, role, actifs.has(Joueurs.normaliser(role)));
+      controles.push({ role, controle: item.controle });
+      fieldset.appendChild(item.groupe);
+    });
+    return { fieldset, controles, rolesMasques };
+  }
 
-  appliquerFiltresGestionJoueurs();
-}
+  function valeurRoles(controles) {
+    return [
+      Joueurs.rolesSelectionnes(controles.controles),
+      ...(controles.rolesMasques || [])
+    ].filter(Boolean).join(",");
+  }
 
-function rendreEnteteTriGestionJoueurs(colonne, titre) {
-  const actif = triGestionJoueurs.colonne === colonne;
-  const direction = triGestionJoueurs.direction;
-  const libelleDirection = colonne === "pseudo"
-    ? (direction === "asc" ? "A → Z" : "Z → A")
-    : (direction === "asc" ? "Fort → faible" : "Faible → fort");
-  const classeBouton = actif
-    ? "players-sort-button players-sort-button-active"
-    : "players-sort-button";
+  function afficherFormulaireJoueur(joueur) {
+    const edition = Boolean(joueur);
+    const pseudo = UI.champ({ id: "player-pseudo", label: "Pseudo", value: joueur?.pseudo || "", required: true, maxLength: 80 });
+    const roles = controlesRoles(joueur?.roles || "Soldat", {
+      preserverRolesMasques: edition
+    });
+    const statut = UI.select({ id: "player-status", label: "Statut", value: joueur?.statut || "Actif", options: Joueurs.statuts.map(function (v) { return { value: v, label: v }; }) });
+    const code = (!edition || estSuperAdminConnecte()) ? UI.champ({
+      id: "player-access-code",
+      name: "new-password",
+      type: "password",
+      label: edition ? "Nouveau code d’accès (facultatif)" : "Code d’accès initial",
+      autocomplete: "new-password",
+      required: !edition,
+      minLength: 10,
+      maxLength: 256,
+      aide: "10 caractères minimum. Le code n’est jamais affiché après enregistrement."
+    }) : null;
+    const credentialAdmin = estSuperAdminConnecte() ? UI.champ({
+      id: "player-admin-credential",
+      name: "new-password",
+      type: "password",
+      label: edition ? "Nouveau mot de passe administrateur (facultatif)" : "Mot de passe administrateur initial (si rôle privilégié)",
+      autocomplete: "new-password",
+      minLength: 12,
+      maxLength: 256,
+      aide: "Requis pour un nouveau compte Officier ou SuperAdmin. 12 caractères minimum."
+    }) : null;
+    const discord = estSuperAdminConnecte() ? UI.champ({
+      id: "player-discord-id",
+      label: "ID Discord (facultatif)",
+      value: joueur?.discordId || "",
+      inputMode: "numeric",
+      maxLength: 20,
+      aide: "17 à 20 chiffres. Laissez vide pour retirer la liaison administrative."
+    }) : null;
+    const erreur = UI.element("p", { className: "error", role: "alert", hidden: true });
+    const formulaire = UI.element("form", { className: "form-zone" }, [
+      ...titrePage(edition ? "Modifier un joueur" : "Ajouter un joueur"),
+      pseudo.groupe,
+      roles.fieldset,
+      statut.groupe,
+      discord?.groupe,
+      code?.groupe,
+      credentialAdmin?.groupe,
+      erreur,
+      UI.actions([
+        UI.bouton(edition ? "Enregistrer" : "Ajouter", null, { type: "submit" }),
+        UI.bouton("Annuler", afficherGestionJoueurs, { className: "secondary-button" })
+      ])
+    ]);
+    formulaire.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      const rolesValeur = valeurRoles(roles);
+      let codeValeur = code?.controle.value || "";
+      let credentialAdminValeur = credentialAdmin?.controle.value || "";
+      if (!rolesValeur) {
+        erreur.textContent = "Sélectionnez au moins un rôle.";
+        erreur.hidden = false;
+        return;
+      }
+      if ((!edition || codeValeur) && codeValeur.length < 10) {
+        erreur.textContent = "Le code d’accès doit contenir au moins 10 caractères.";
+        erreur.hidden = false;
+        return;
+      }
+      const rolePrivilegie = Joueurs.rolePresent(rolesValeur, "Officier") || Joueurs.rolePresent(rolesValeur, "SuperAdmin");
+      const dejaPrivilegie = Joueurs.rolePresent(joueur?.roles, "Officier") || Joueurs.rolePresent(joueur?.roles, "SuperAdmin");
+      if (credentialAdminValeur && credentialAdminValeur.length < 12) {
+        erreur.textContent = "Le mot de passe administrateur doit contenir au moins 12 caractères.";
+        erreur.hidden = false;
+        return;
+      }
+      const discordValeur = discord?.controle.value.trim() || "";
+      if (discordValeur && !/^[0-9]{17,20}$/.test(discordValeur)) {
+        erreur.textContent = "L’identifiant Discord doit contenir entre 17 et 20 chiffres.";
+        erreur.hidden = false;
+        return;
+      }
+      if (rolePrivilegie && (!edition || !dejaPrivilegie || joueur?.credentialAdminConfigure !== true) && !credentialAdminValeur) {
+        erreur.textContent = "Configurez un mot de passe administrateur pour ce rôle privilégié.";
+        erreur.hidden = false;
+        return;
+      }
+      UI.chargement(edition ? "Modification du joueur…" : "Ajout du joueur…");
+      const resultat = await appelAPISensible(edition ? "modifierJoueur" : "ajouterJoueur", {
+        idJoueur: joueur?.id,
+        pseudo: pseudo.controle.value.trim(),
+        roles: rolesValeur,
+        statut: statut.controle.value,
+        discordId: discordValeur,
+        codeAcces: codeValeur,
+        motDePasseAdminInitial: credentialAdminValeur
+      });
+      codeValeur = "";
+      credentialAdminValeur = "";
+      if (code) code.controle.value = "";
+      if (credentialAdmin) credentialAdmin.controle.value = "";
+      if (!estSucces(resultat)) return afficherErreurPage(resultat.message, afficherGestionJoueurs);
+      await UI.message("Gestion des joueurs", resultat.message || "Joueur enregistré.");
+      afficherGestionJoueurs();
+    });
+    UI.afficher(formulaire, { focus: pseudo.controle });
+  }
 
-  return `
-    <button type="button" class="${classeBouton}" onclick="definirTriGestionJoueurs('${colonne}')">
-      <span>${escapeHTML(titre)}</span>
-      <span class="players-sort-indicator">${escapeHTML(actif ? libelleDirection : "↕")}</span>
-    </button>
-  `;
-}
+  async function supprimerJoueur(joueur) {
+    const confirme = await UI.confirmer("Supprimer le joueur", "Supprimer définitivement ce joueur et ses présences ?", "Supprimer", { danger: true });
+    if (!confirme) return;
+    UI.chargement("Suppression du joueur…");
+    const resultat = await appelAPISensible("supprimerJoueur", { idJoueur: joueur.id });
+    if (!estSucces(resultat)) return afficherErreurPage(resultat.message, afficherGestionJoueurs);
+    await UI.message("Joueur supprimé", resultat.message || "Le joueur a été supprimé.");
+    afficherGestionJoueurs();
+  }
 
-function rendreFiltreStatutGestionJoueurs() {
-  const compteur = filtresStatutGestionJoueurs.size + "/" + STATUTS_GESTION_JOUEURS.length;
-  const classeCompteur = filtresStatutGestionJoueurs.size === STATUTS_GESTION_JOUEURS.length
-    ? "journal-filter-count"
-    : "journal-filter-count journal-filter-count-active";
+  async function afficherGestionCompetitions() {
+    if (!State.etat.accesAdmin) return demanderAccesOfficier();
+    UI.chargement("Chargement des compétitions…");
+    const resultat = await appelAPI("chargerCompetitions", { portee: "admin" });
+    if (!estSucces(resultat)) return gererErreurAdmin(resultat);
+    const liste = UI.element("div", { className: "competition-list" });
+    (resultat.competitions || []).forEach(function (competition) {
+      const actions = [
+        UI.bouton("Modifier", function () { afficherFormulaireCompetition(competition); }, { className: "secondary-button" }),
+        UI.bouton("Dates", function () { afficherGestionDatesCompetition(competition); }, { className: "secondary-button" })
+      ];
+      if (competition.statut !== "Ouverte") actions.push(UI.bouton("Ouvrir", function () { changerStatutCompetition(competition, "Ouverte"); }));
+      if (competition.statut !== "Fermée") actions.push(UI.bouton("Fermer", function () { changerStatutCompetition(competition, "Fermée"); }, { className: "secondary-button" }));
+      if (estSuperAdminConnecte() && competition.statut !== "Archivée") actions.push(UI.bouton("Archiver", function () { changerStatutCompetition(competition, "Archivée"); }, { className: "secondary-button" }));
+      if (estSuperAdminConnecte()) actions.push(UI.bouton("Supprimer", function () { supprimerCompetition(competition); }, { className: "danger-button" }));
+      liste.appendChild(UI.element("article", { className: "competition-card" }, [
+        UI.element("h3", {}, competition.nom || "Compétition"),
+        UI.element("p", {}, "Statut : " + competition.statut),
+        UI.element("p", {}, competition.description || ""),
+        UI.actions(actions)
+      ]));
+    });
+    if (!liste.children.length) liste.appendChild(UI.element("p", {}, "Aucune compétition."));
+    UI.afficher(UI.panneau("Gestion des compétitions", [liste, UI.actions([
+      UI.bouton("Créer une compétition", function () { afficherFormulaireCompetition(null); }),
+      UI.bouton("Retour", afficherEspaceOfficier, { className: "secondary-button" })
+    ])]));
+  }
 
-  let html = `
-    <details class="journal-filter journal-header-filter players-status-filter">
-      <summary>
-        <span class="journal-filter-label">Statut</span>
-        <span class="journal-filter-meta">
-          <span class="${classeCompteur}">${escapeHTML(compteur)}</span>
-          <span class="journal-filter-arrow">▾</span>
-        </span>
-      </summary>
-      <div class="journal-filter-panel players-status-filter-panel">
-        <div class="journal-filter-actions">
-          <button type="button" onclick="selectionnerStatutsGestionJoueurs(true)">Tout sélectionner</button>
-          <button type="button" onclick="selectionnerStatutsGestionJoueurs(false)" class="secondary-button">Tout désélectionner</button>
-        </div>
-  `;
+  function afficherFormulaireCompetition(competition) {
+    const edition = Boolean(competition);
+    const nom = UI.champ({ id: "competition-name", label: "Nom", value: competition?.nom || "", required: true, maxLength: 120 });
+    const description = UI.champ({ id: "competition-description", label: "Description", value: competition?.description || "", multiline: true, maxLength: 2000 });
+    const statut = UI.select({ id: "competition-status", label: "Statut", value: competition?.statut || "Brouillon", options: Competitions.statuts.filter(function (v) { return v !== "Archivée" || estSuperAdminConnecte(); }).map(function (v) { return { value: v, label: v }; }) });
+    const roles = controlesRoles(competition?.rolesAutorises || "Officier,Strateur,Soldat", {
+      preserverRolesMasques: edition
+    });
+    const dates = !edition ? UI.champ({ id: "competition-dates", label: "Dates (AAAA-MM-JJ, séparées par des virgules)", required: true, placeholder: "2026-07-15, 2026-07-16" }) : null;
+    const horaires = !edition ? UI.champ({ id: "competition-schedules", label: "Horaires", value: "21:00,21:15,21:30" }) : null;
+    const auto = UI.caseACocher("competition-auto", "Ouverture et fermeture automatiques", competition?.fermetureAutoActive === true);
+    const heureOuverture = UI.champ({ id: "competition-open-time", label: "Heure d’ouverture", type: "time", value: competition?.heureOuverture || "" });
+    const heureFermeture = UI.champ({ id: "competition-close-time", label: "Heure de fermeture", type: "time", value: competition?.heureFermeture || "" });
+    const notification = UI.caseACocher("competition-staff-notification", "Notification staff", competition?.notificationPresenceActive === true);
+    const heureNotification = UI.champ({ id: "competition-staff-time", label: "Heure de notification staff", type: "time", value: competition?.heureNotificationPresence || "19:00" });
+    const rappel = UI.caseACocher("competition-player-reminder", "Rappel joueurs", competition?.rappelPresenceActive === true);
+    const heureRappel = UI.champ({ id: "competition-reminder-time", label: "Heure du rappel joueurs", type: "time", value: competition?.heureRappelPresence || "17:00" });
+    const erreur = UI.element("p", { className: "error", role: "alert", hidden: true });
+    const formulaire = UI.element("form", { className: "form-zone competition-form" }, [
+      ...titrePage(edition ? "Modifier la compétition" : "Créer une compétition"),
+      nom.groupe, description.groupe, statut.groupe, roles.fieldset,
+      dates?.groupe, horaires?.groupe,
+      auto.groupe, heureOuverture.groupe, heureFermeture.groupe,
+      notification.groupe, heureNotification.groupe,
+      rappel.groupe, heureRappel.groupe,
+      erreur,
+      UI.actions([
+        UI.bouton(edition ? "Enregistrer" : "Créer", null, { type: "submit" }),
+        UI.bouton("Annuler", afficherGestionCompetitions, { className: "secondary-button" })
+      ])
+    ]);
+    formulaire.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      const rolesValeur = valeurRoles(roles);
+      const analyseDates = dates ? Competitions.analyserDates(dates.controle.value) : { dates: [], invalides: [], doublons: [] };
+      const datesValeur = analyseDates.dates;
+      if (analyseDates.invalides.length || analyseDates.doublons.length) {
+        erreur.textContent = analyseDates.invalides.length
+          ? "Une ou plusieurs dates sont invalides. Utilisez le format AAAA-MM-JJ."
+          : "Une même date ne peut pas être ajoutée plusieurs fois.";
+        erreur.hidden = false;
+        return;
+      }
+      const analyseHoraires = horaires
+        ? Competitions.analyserHoraires(horaires.controle.value)
+        : { horaires: [], invalides: [], doublons: [] };
+      if (analyseHoraires.invalides.length || analyseHoraires.doublons.length) {
+        erreur.textContent = analyseHoraires.invalides.length
+          ? "Un ou plusieurs horaires sont invalides. Utilisez le format HH:MM."
+          : "Un même horaire ne peut pas être ajouté plusieurs fois.";
+        erreur.hidden = false;
+        horaires.controle.focus();
+        return;
+      }
+      if (!nom.controle.value.trim() || !rolesValeur || (!edition && !datesValeur.length)) {
+        erreur.textContent = "Complétez le nom, les rôles et au moins une date.";
+        erreur.hidden = false;
+        return;
+      }
+      if (auto.controle.checked && (!heureOuverture.controle.value || !heureFermeture.controle.value)) {
+        erreur.textContent = "Renseignez les deux horaires automatiques.";
+        erreur.hidden = false;
+        return;
+      }
+      const config = {
+        idCompetition: competition?.id,
+        nom: nom.controle.value.trim(),
+        description: description.controle.value.trim(),
+        statut: statut.controle.value,
+        rolesAutorises: rolesValeur,
+        dates: datesValeur,
+        horaires: analyseHoraires.horaires.join(","),
+        fermetureAutoActive: auto.controle.checked,
+        heureOuvertureAuto: heureOuverture.controle.value,
+        heureFermetureAuto: heureFermeture.controle.value,
+        notificationPresenceActive: notification.controle.checked,
+        heureNotificationPresence: heureNotification.controle.value,
+        rappelPresenceActive: rappel.controle.checked,
+        heureRappelPresence: heureRappel.controle.value
+      };
+      const confirme = await UI.confirmer(edition ? "Modifier la compétition" : "Créer la compétition", "Confirmer cette configuration ?", edition ? "Enregistrer" : "Créer");
+      if (!confirme) return;
+      UI.chargement(edition ? "Modification de la compétition…" : "Création de la compétition…");
+      const resultat = await appelAPISensible(edition ? "modifierCompetitionComplete" : "creerCompetitionComplete", { config: JSON.stringify(config) });
+      if (!estSucces(resultat)) return afficherErreurPage(resultat.message, afficherGestionCompetitions);
+      await UI.message("Gestion des compétitions", resultat.message || "Compétition enregistrée.");
+      afficherGestionCompetitions();
+    });
+    UI.afficher(formulaire, { focus: nom.controle });
+  }
 
-  STATUTS_GESTION_JOUEURS.forEach(function (statut) {
-    html += `
-      <label class="journal-filter-option">
-        <input
-          type="checkbox"
-          value="${escapeHTML(statut)}"
-          ${filtresStatutGestionJoueurs.has(statut) ? "checked" : ""}
-          onchange="changerFiltreStatutGestionJoueurs(this.value, this.checked)"
-        >
-        <span>${escapeHTML(statut)}</span>
-      </label>
-    `;
+  async function changerStatutCompetition(competition, nouveauStatut) {
+    const confirme = await UI.confirmer("Changer le statut", "Passer la compétition au statut « " + nouveauStatut + " » ?", "Confirmer");
+    if (!confirme) return;
+    UI.chargement("Modification du statut…");
+    const resultat = await appelAPISensible("modifierStatutCompetition", { idCompetition: competition.id, nouveauStatut });
+    if (!estSucces(resultat)) return afficherErreurPage(resultat.message, afficherGestionCompetitions);
+    await UI.message("Statut modifié", resultat.message || "Le statut a été mis à jour.");
+    afficherGestionCompetitions();
+  }
+
+  async function supprimerCompetition(competition) {
+    const confirme = await UI.confirmer("Supprimer la compétition", "Cette suppression retire aussi les dates et les présences associées. Continuer ?", "Supprimer", { danger: true });
+    if (!confirme) return;
+    UI.chargement("Suppression de la compétition…");
+    const resultat = await appelAPISensible("supprimerCompetition", { idCompetition: competition.id });
+    if (!estSucces(resultat)) return afficherErreurPage(resultat.message, afficherGestionCompetitions);
+    await UI.message("Compétition supprimée", resultat.message || "La compétition a été supprimée.");
+    afficherGestionCompetitions();
+  }
+
+  async function afficherGestionDatesCompetition(competition) {
+    UI.chargement("Chargement des dates…");
+    const resultat = await appelAPI("chargerDatesCompetition", { idCompetition: competition.id, portee: "admin" });
+    if (!estSucces(resultat)) return gererErreurAdmin(resultat, afficherGestionCompetitions);
+    const liste = UI.element("div", { className: "date-admin-list" });
+    (resultat.dates || []).forEach(function (date) {
+      liste.appendChild(UI.element("div", { className: "date-admin-row" }, [
+        UI.element("span", {}, date.dateAffichage + " — " + (date.horaires || "Sans horaire")),
+        UI.bouton("Supprimer", async function () {
+          const confirme = await UI.confirmer("Supprimer la date", "Supprimer cette date et ses présences ?", "Supprimer", { danger: true });
+          if (!confirme) return;
+          UI.chargement("Suppression de la date…");
+          const suppression = await appelAPISensible("supprimerDateCompetition", { idDate: date.idDate });
+          if (!estSucces(suppression)) return afficherErreurPage(suppression.message, function () { afficherGestionDatesCompetition(competition); });
+          afficherGestionDatesCompetition(competition);
+        }, { className: "danger-button" })
+      ]));
+    });
+    const date = UI.champ({ id: "new-competition-date", label: "Nouvelle date", type: "date" });
+    const horaires = UI.champ({ id: "new-competition-schedules", label: "Horaires", value: "21:00,21:15,21:30" });
+    const formulaire = UI.element("form", { className: "inline-form" }, [date.groupe, horaires.groupe, UI.bouton("Ajouter", null, { type: "submit" })]);
+    formulaire.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      if (!Competitions.dateIsoValide(date.controle.value)) return UI.statut("Sélectionnez une date valide.", "error");
+      const analyseHoraires = Competitions.analyserHoraires(horaires.controle.value);
+      if (analyseHoraires.invalides.length || analyseHoraires.doublons.length) {
+        UI.statut(
+          analyseHoraires.invalides.length
+            ? "Utilisez uniquement des horaires HH:MM valides."
+            : "Un même horaire ne peut pas être ajouté plusieurs fois.",
+          "error"
+        );
+        horaires.controle.focus();
+        return;
+      }
+      UI.chargement("Ajout de la date…");
+      const ajout = await appelAPISensible("ajouterDateCompetition", {
+        idCompetition: competition.id,
+        dateCompetition: date.controle.value,
+        horaires: analyseHoraires.horaires.join(",")
+      });
+      if (!estSucces(ajout)) return afficherErreurPage(ajout.message, function () { afficherGestionDatesCompetition(competition); });
+      afficherGestionDatesCompetition(competition);
+    });
+    UI.afficher(UI.panneau("Dates — " + competition.nom, [liste, formulaire, UI.actions([
+      UI.bouton("Retour", afficherGestionCompetitions, { className: "secondary-button" })
+    ])]));
+  }
+
+  async function afficherSelectionCompetitionOfficier() {
+    UI.chargement("Chargement des compétitions…");
+    const resultat = await appelAPI("chargerCompetitions", { portee: "admin" });
+    if (!estSucces(resultat)) return gererErreurAdmin(resultat);
+    const liste = UI.element("div", { className: "competition-list" });
+    (resultat.competitions || []).forEach(function (competition) {
+      liste.appendChild(UI.element("article", { className: "competition-card" }, [
+        UI.element("h3", {}, competition.nom),
+        UI.element("p", {}, "Statut : " + competition.statut),
+        UI.actions([
+          UI.bouton("Consulter les présences", function () { afficherTableauPresencesOfficier(competition); }),
+          UI.bouton("Voir les sans réponse", function () { afficherSansReponse(competition); }, { className: "secondary-button" })
+        ])
+      ]));
+    });
+    UI.afficher(UI.panneau("Tableaux de présences", [liste, UI.actions([
+      UI.bouton("Retour", afficherEspaceOfficier, { className: "secondary-button" })
+    ])]));
+  }
+
+  async function afficherTableauPresencesOfficier(competition) {
+    UI.chargement("Chargement du tableau complet…");
+    const resultat = await appelAPI("genererTableauPresences", { idCompetition: competition.id });
+    if (!estSucces(resultat)) return gererErreurAdmin(resultat, afficherSelectionCompetitionOfficier);
+    const entetes = ["Pseudo", "Synthèse", ...(resultat.dates || []).map(function (date) { return date.dateAffichage; }), "Détails"];
+    const lignes = (resultat.lignes || []).map(function (ligne) {
+      const disponibilites = ligne.disponibilites || [];
+      return [ligne.pseudo, ligne.synthese, ...disponibilites.map(function (dispo) {
+        const horaires = dispo.horairesDisponibles ? " — " + dispo.horairesDisponibles : "";
+        return (dispo.statut || "Non renseigné") + horaires;
+      }), UI.bouton("Détails", function () {
+        const dialogue = global.MPPDialog.creer("Présences de " + ligne.pseudo, { fermetureEchap: true });
+        const details = disponibilites.map(function (dispo) {
+          return [dispo.dateAffichage || dispo.dateCompetition, dispo.statut || "Non renseigné", dispo.horairesDisponibles || "-"];
+        });
+        dialogue.contenu.appendChild(UI.tableau(["Date", "Statut", "Horaires"], details, { caption: "Détail des disponibilités", rowHeaders: true }));
+        const fermer = UI.bouton("Fermer", dialogue.fermer);
+        dialogue.actions.appendChild(fermer);
+        requestAnimationFrame(function () { fermer.focus(); });
+      }, { className: "secondary-button" })];
+    });
+    const statistiquesDates = (resultat.dates || []).map(function (date, index) {
+      const stats = { presents: 0, remplacants: 0, absents: 0, sansReponse: 0 };
+      (resultat.lignes || []).forEach(function (ligne) {
+        const statut = String(ligne.disponibilites?.[index]?.statut || "Non renseigné");
+        if (statut === "Présent") stats.presents++;
+        else if (statut === "Remplaçant") stats.remplacants++;
+        else if (statut === "Absent") stats.absents++;
+        else stats.sansReponse++;
+      });
+      return [date.dateAffichage, stats.presents, stats.remplacants, stats.absents, stats.sansReponse];
+    });
+    const effectifsHoraires = [];
+    (resultat.dates || []).forEach(function (date, index) {
+      Presences.horaires(date.horaires).forEach(function (horaire) {
+        let presents = 0;
+        let remplacants = 0;
+        (resultat.lignes || []).forEach(function (ligne) {
+          const dispo = ligne.disponibilites?.[index] || {};
+          const disponible = Presences.horaires(dispo.horairesDisponibles).includes(horaire);
+          if (dispo.statut === "Présent" && disponible) presents++;
+          if (dispo.statut === "Remplaçant" && disponible) remplacants++;
+        });
+        effectifsHoraires.push([date.dateAffichage, horaire, presents, remplacants]);
+      });
+    });
+    UI.afficher(UI.panneau("Présences — " + competition.nom, [
+      UI.tableau(entetes, lignes, { caption: "Tableau complet des présences", rowHeaders: true }),
+      UI.element("h3", {}, "Statistiques par date"),
+      UI.tableau(["Date", "Présents", "Remplaçants", "Absents", "Sans réponse"], statistiquesDates, { caption: "Statistiques des présences par date", rowHeaders: true }),
+      effectifsHoraires.length ? UI.element("div", {}, [
+        UI.element("h3", {}, "Effectif par horaire"),
+        UI.tableau(["Date", "Horaire", "Présents", "Remplaçants"], effectifsHoraires, { caption: "Effectif disponible par horaire", rowHeaders: true })
+      ]) : null,
+      UI.actions([
+        UI.bouton("Présences du jour", afficherAujourdHuiOfficier),
+        UI.bouton("Voir les sans réponse", function () { afficherSansReponse(competition); }, { className: "secondary-button" }),
+        UI.bouton("Retour", afficherSelectionCompetitionOfficier, { className: "secondary-button" })
+      ])
+    ]));
+  }
+
+  async function afficherSansReponse(competition) {
+    UI.chargement("Chargement des joueurs sans réponse…");
+    const resultat = await appelAPI("chargerJoueursSansReponse", { idCompetition: competition.id });
+    if (!estSucces(resultat)) return gererErreurAdmin(resultat, afficherSelectionCompetitionOfficier);
+    const liste = UI.element("ul", { className: "simple-list" }, (resultat.joueurs || []).map(function (joueur) {
+      return UI.element("li", {}, joueur.pseudo + (joueur.roles ? " — " + joueur.roles : ""));
+    }));
+    if (!liste.children.length) liste.appendChild(UI.element("li", {}, "Tous les joueurs ont répondu."));
+    UI.afficher(UI.panneau("Joueurs sans réponse", [liste, UI.actions([
+      UI.bouton("Présences du jour", afficherAujourdHuiOfficier),
+      UI.bouton("Consulter les présences", function () { afficherTableauPresencesOfficier(competition); }),
+      UI.bouton("Retour", afficherSelectionCompetitionOfficier, { className: "secondary-button" })
+    ])]));
+  }
+
+  async function afficherAujourdHuiOfficier() {
+    UI.chargement("Chargement des présences du jour…");
+    const resultat = await appelAPI("chargerAujourdHuiOfficier");
+    if (!estSucces(resultat)) return gererErreurAdmin(resultat);
+    const contenu = UI.element("div", { className: "today-list" });
+    const resume = resultat.resume || {};
+    contenu.appendChild(UI.element("div", { className: "stats-row", ariaLabel: "Résumé des présences du jour" }, [
+      carteStat("Compétitions", resume.competitions || 0),
+      carteStat("Présents", resume.presents || 0),
+      carteStat("Remplaçants", resume.remplacants || 0),
+      carteStat("Absents", resume.absents || 0),
+      carteStat("Sans réponse", resume.sansReponse || 0)
+    ]));
+    (resultat.competitions || []).forEach(function (competition) {
+      const statutRappel = competition.rappel?.actif
+        ? "Activé à " + (competition.rappel.heureProgrammee || "-") + " — " + libelleStatutRappel(competition.rappel.statutJour)
+        : "Rappel désactivé";
+      const joueurs = (competition.lignes || []).map(function (ligne) {
+        const dispo = ligne.disponibilites?.[0] || {};
+        return [ligne.pseudo, dispo.statut || "Non renseigné", dispo.horairesDisponibles || "-"];
+      });
+      const effectifs = (competition.effectifParHoraire || []).map(function (horaire) {
+        return [horaire.horaire, horaire.presents, horaire.remplacants, horaire.absents, horaire.sansReponse];
+      });
+      const sansReponse = competition.joueursSansReponse || { avecDiscord: [], sansDiscord: [] };
+      const listesSansReponse = UI.element("div", { className: "today-missing-list" });
+      if (sansReponse.avecDiscord?.length) {
+        listesSansReponse.append(
+          UI.element("h4", {}, "Discord lié"),
+          UI.element("ul", {}, sansReponse.avecDiscord.map(function (joueur) {
+            return UI.element("li", {}, joueur.pseudo + (joueur.discordUsername ? " — " + joueur.discordUsername : ""));
+          }))
+        );
+      }
+      if (sansReponse.sansDiscord?.length) {
+        listesSansReponse.append(
+          UI.element("h4", {}, "Sans Discord lié"),
+          UI.element("ul", {}, sansReponse.sansDiscord.map(function (joueur) { return UI.element("li", {}, joueur.pseudo); }))
+        );
+      }
+      if (!listesSansReponse.children.length) listesSansReponse.appendChild(UI.element("p", {}, "Tous les joueurs ont répondu."));
+      contenu.appendChild(UI.element("article", { className: "today-competition" }, [
+        UI.element("h3", {}, competition.nom),
+        UI.element("p", {}, competition.date?.dateAffichage || resultat.dateAffichage || ""),
+        UI.element("p", { className: "reminder-status" }, statutRappel),
+        UI.element("div", { className: "stats-row" }, [
+          carteStat("Présents", competition.stats?.presents || 0),
+          carteStat("Remplaçants", competition.stats?.remplacants || 0),
+          carteStat("Absents", competition.stats?.absents || 0),
+          carteStat("Sans réponse", competition.stats?.sansReponse || 0)
+        ]),
+        UI.tableau(["Joueur", "Statut", "Horaires"], joueurs, { caption: "Présences du jour", rowHeaders: true }),
+        effectifs.length ? UI.tableau(["Horaire", "Présents", "Remplaçants", "Absents", "Sans réponse"], effectifs, { caption: "Effectif du jour par horaire", rowHeaders: true }) : null,
+        listesSansReponse,
+        UI.actions([
+          UI.bouton("Consulter les présences", function () { afficherTableauPresencesOfficier(competition); }),
+          UI.bouton("Voir les sans réponse", function () { afficherSansReponse(competition); }, { className: "secondary-button" })
+        ])
+      ]));
+    });
+    if (!contenu.children.length) contenu.appendChild(UI.element("p", {}, "Aucune compétition aujourd’hui."));
+    UI.afficher(UI.panneau("Présences du jour", [contenu, UI.actions([
+      UI.bouton("Retour", afficherEspaceOfficier, { className: "secondary-button" })
+    ])]));
+  }
+
+  async function afficherJournalActivite() {
+    UI.chargement("Chargement du journal…");
+    const resultat = await appelAPI("chargerJournalActivite");
+    if (!estSucces(resultat)) return gererErreurAdmin(resultat);
+    const recherche = UI.champ({ id: "journal-search", label: "Filtrer le journal", placeholder: "Utilisateur ou action" });
+    const zone = UI.element("div");
+    function rendre() {
+      const lignes = Journal.filtrer(resultat.journal, recherche.controle.value).map(function (entree) {
+        return [entree.dateHeure, entree.utilisateur || "", entree.action || "", UI.element("span", { className: "journal-details" }, entree.details || "")];
+      });
+      zone.replaceChildren(UI.tableau(["Date", "Utilisateur", "Action", "Détails"], lignes, { caption: "Journal d’activité" }));
+    }
+    recherche.controle.addEventListener("input", rendre);
+    rendre();
+    UI.afficher(UI.panneau("Journal d’activité", [recherche.groupe, zone, UI.actions([
+      UI.bouton("Retour", afficherEspaceOfficier, { className: "secondary-button" })
+    ])]));
+  }
+
+  async function afficherDemandesLiaisonDiscord() {
+    if (!estSuperAdminConnecte()) return UI.message("Accès refusé", "Action réservée au SuperAdmin.");
+    UI.chargement("Chargement des demandes Discord…");
+    const resultat = await appelAPI("chargerDemandesLiaisonDiscord");
+    if (!estSucces(resultat)) return gererErreurAdmin(resultat);
+    const liste = UI.element("div", { className: "discord-requests" });
+    (resultat.demandes || []).forEach(function (demande) {
+      liste.appendChild(UI.element("article", { className: "discord-request-card" }, [
+        UI.element("h3", {}, demande.pseudo || "Joueur"),
+        UI.element("p", {}, demande.discordUsername ? "Compte Discord : " + demande.discordUsername : "Compte Discord reçu"),
+        UI.element("p", {}, "Créée : " + UI.formaterDate(demande.createdAt || demande.created_at)),
+        UI.actions([
+          UI.bouton("Valider", async function () { await traiterDemandeDiscord(demande, "valider"); }),
+          UI.bouton("Refuser", async function () { await traiterDemandeDiscord(demande, "refuser"); }, { className: "danger-button" })
+        ])
+      ]));
+    });
+    if (!liste.children.length) liste.appendChild(UI.element("p", {}, "Aucune demande en attente."));
+    UI.afficher(UI.panneau("Demandes de liaison Discord", [liste, UI.actions([
+      UI.bouton("Retour", afficherEspaceOfficier, { className: "secondary-button" })
+    ])]));
+  }
+
+  async function traiterDemandeDiscord(demande, action) {
+    let raison = "";
+    if (action === "refuser") {
+      raison = await UI.demanderTexte("Refuser la liaison", "Motif du refus (facultatif)", { multiline: true, maxLength: 500 });
+      if (raison === null) return;
+    }
+    const confirme = await UI.confirmer(action === "valider" ? "Valider la liaison" : "Refuser la liaison", "Confirmer cette décision ?", "Confirmer");
+    if (!confirme) return;
+    UI.chargement("Traitement de la demande…");
+    const resultat = await appelAPISensible(action === "valider" ? "validerDemandeLiaisonDiscord" : "refuserDemandeLiaisonDiscord", {
+      idDemande: demande.id,
+      raison
+    });
+    if (!estSucces(resultat)) return afficherErreurPage(resultat.message, afficherDemandesLiaisonDiscord);
+    await UI.message("Demande Discord", resultat.message || "Demande traitée.");
+    afficherDemandesLiaisonDiscord();
+  }
+
+  async function afficherChangerMotDePasseAdmin() {
+    const valeurs = await formulaireCredential({
+      titre: "Modifier le mot de passe administrateur",
+      libelleNouveau: "Nouveau mot de passe",
+      messageTropCourt: "Le nouveau mot de passe doit contenir au moins 12 caractères.",
+      demanderActuel: false,
+      longueurMinimale: 12
+    });
+    if (!valeurs) return;
+    let nouveauMdp = valeurs.nouveau;
+    valeurs.actuel = "";
+    valeurs.nouveau = "";
+    UI.chargement("Modification du mot de passe…");
+    const resultat = await appelAPISensible("changerMotDePasse", {
+      pseudo: State.etat.utilisateur?.pseudo,
+      nouveauMdp
+    });
+    nouveauMdp = "";
+    if (!estSucces(resultat)) {
+      await UI.message("Modification refusée", resultat.message || "Le mot de passe n’a pas été modifié.");
+      afficherEspaceOfficier();
+      return;
+    }
+    State.effacer();
+    await UI.message("Mot de passe modifié", resultat.message || "Reconnectez-vous.");
+    afficherConnexion();
+  }
+
+  async function demarrer() {
+    afficherVersionSite();
+    UI.effacerStatut();
+    UI.chargement("Initialisation…");
+    const restauree = await restaurerSession();
+    if (!restauree) afficherConnexion();
+  }
+
+  global.addEventListener("mpp:admin-session-warning", function () {
+    UI.statut("Votre session officier va bientôt expirer en l’absence d’activité.", "warning");
   });
 
-  html += `
-      </div>
-    </details>
-  `;
-
-  return html;
-}
-
-function formaterDerniereConnexionJoueur(valeur) {
-  if (!valeur) return "Jamais connecté";
-
-  const dateConnexion = new Date(valeur);
-  if (Number.isNaN(dateConnexion.getTime())) return "Jamais connecté";
-
-  const parties = new Intl.DateTimeFormat("fr-FR", {
-    timeZone: "Europe/Paris",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(dateConnexion);
-  const valeurs = {};
-
-  parties.forEach(function (partie) {
-    valeurs[partie.type] = partie.value;
+  global.addEventListener("mpp:admin-session-expired", function () {
+    State.etat.accesAdmin = false;
+    State.etat.estSuperAdmin = false;
+    UI.statut("Session officier expirée. Validez de nouveau votre accès.", "error");
+    if (State.etat.utilisateur) afficherAccueilConnecte();
+    else afficherConnexion();
   });
 
-  return `${valeurs.day}/${valeurs.month}/${valeurs.year} - ${valeurs.hour}:${valeurs.minute}:${valeurs.second}`;
-}
-
-function joueurDiscordLieGestion(joueur) {
-  return Boolean(joueur?.discordLieA || joueur?.discordUsername || joueur?.discordId);
-}
-
-function rendrePseudoGestionJoueur(joueur) {
-  const pseudo = escapeHTML(joueur?.pseudo || "-");
-
-  if (!joueurDiscordLieGestion(joueur)) {
-    return pseudo;
-  }
-
-  const titre = joueur.discordUsername
-    ? "Discord lié : " + joueur.discordUsername
-    : "Discord lié";
-
-  return `
-    <span class="players-pseudo-with-discord">
-      <span>${pseudo}</span>
-      <span class="players-discord-badge" title="${escapeHTML(titre)}" aria-label="${escapeHTML(titre)}">D</span>
-    </span>
-  `;
-}
-
-function afficherTableauGestionJoueurs(joueurs) {
-  const zone = document.getElementById("zoneTableauJoueurs");
-
-  if (!zone) return;
-
-  let html = `
-    <div class="table-container">
-      <table class="presence-table players-table">
-        <thead>
-          <tr>
-            <th class="players-pseudo-column">${rendreEnteteTriGestionJoueurs("pseudo", "Pseudo")}</th>
-            <th class="players-grade-column">${rendreEnteteTriGestionJoueurs("grade", "Grade")}</th>
-            <th class="players-status-column">${rendreFiltreStatutGestionJoueurs()}</th>
-            <th class="players-login-column">Dernière connexion</th>
-            <th class="players-actions-column">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-  `;
-
-  if (joueurs.length === 0) {
-    html += `
-      <tr>
-        <td colspan="5" class="players-empty">Aucun joueur ne correspond aux filtres sélectionnés.</td>
-      </tr>
-    `;
-  }
-
-  joueurs.forEach(function (joueur) {
-    const rolesJoueur = String(joueur.roles || "");
-    const estJoueurSuperAdmin = rolesJoueur.toLowerCase().includes("superadmin");
-    const statutJoueur = statutGestionJoueur(joueur);
-    const estJoueurConnecte =
-      String(joueur.pseudo || "").trim().toLowerCase() ===
-      String(utilisateurConnecte?.joueur?.pseudo || "").trim().toLowerCase();
-    const boutonSuppression =
-      estSuperAdminConnecte() && !estJoueurSuperAdmin && !estJoueurConnecte
-        ? `
-          <button
-            class="danger-button"
-            onclick="confirmerSuppressionJoueur(${Number(joueur.id)})">
-            🗑️ Supprimer
-          </button>
-        `
-        : "";
-
-    html += `
-      <tr>
-        <td>${rendrePseudoGestionJoueur(joueur)}</td>
-        <td>${escapeHTML(joueur.roles || "-")}</td>
-        <td>${escapeHTML(statutJoueur)}</td>
-        <td class="players-last-login">${escapeHTML(formaterDerniereConnexionJoueur(joueur.derniereConnexion))}</td>
-        <td>
-          <div class="players-actions-cell">
-            <button
-              class="secondary-button"
-              onclick='afficherFormulaireModificationJoueur(${jsonPourAttribut(joueur)})'>
-              ✏️ Modifier
-            </button>
-            ${boutonSuppression}
-          </div>
-        </td>
-      </tr>
-    `;
-  });
-
-  html += `
-        </tbody>
-      </table>
-    </div>
-  `;
-
-  zone.innerHTML = html;
-}
-
-function gererAffichageNotificationPresence() {
-  const modeNotificationPresence = document.getElementById("modeNotificationPresence");
-  const zoneNotificationPresence = document.getElementById("zoneNotificationPresence");
-
-  if (!modeNotificationPresence || !zoneNotificationPresence) {
-    return;
-  }
-
-  if (modeNotificationPresence.value === "oui") {
-    zoneNotificationPresence.style.display = "";
-  } else {
-    zoneNotificationPresence.style.display = "none";
-  }
-}
-
-function gererAffichageModificationNotificationPresence() {
-  const modeNotificationPresence = document.getElementById("modifierModeNotificationPresence");
-  const zoneNotificationPresence = document.getElementById("modifierZoneNotificationPresence");
-
-  if (!modeNotificationPresence || !zoneNotificationPresence) {
-    return;
-  }
-
-  if (modeNotificationPresence.value === "oui") {
-    zoneNotificationPresence.style.display = "";
-  } else {
-    zoneNotificationPresence.style.display = "none";
-  }
-}
-
-function gererAffichageModificationRappelPresence() {
-  const modeRappelPresence = document.getElementById("modifierModeRappelPresence");
-  const zoneRappelPresence = document.getElementById("modifierZoneRappelPresence");
-
-  if (!modeRappelPresence || !zoneRappelPresence) {
-    return;
-  }
-
-  if (modeRappelPresence.value === "oui") {
-    zoneRappelPresence.style.display = "";
-  } else {
-    zoneRappelPresence.style.display = "none";
-  }
-}
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", demarrer, { once: true });
+  else demarrer();
+})(window);

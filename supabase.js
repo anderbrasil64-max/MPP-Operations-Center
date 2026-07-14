@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.12.8.1 - Migration complète Supabase
+   Version Alpha 0.13.0 - Security & Reliability
    ========================================================== */
 
 /*
@@ -10,12 +10,119 @@
   - Ne jamais mettre de clé "secret" / "service_role" dans ce fichier.
 */
 
-const SUPABASE_URL = "https://icguokxqrnqdjafqvzyz.supabase.co";
-const SUPABASE_KEY = "sb_publishable_Twp9mcx7CQdS_weNNUPtTQ_8V1s_Z_R";
-
-const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabaseClient = supabase.createClient(
+  MPP_CONFIG.supabaseUrl,
+  MPP_CONFIG.supabasePublishableKey,
+  {
+    auth: { persistSession: false, autoRefreshToken: false }
+  }
+);
 const sbCacheNomsCompetitions = {};
 const SB_TYPE_RAPPEL_PRESENCES_SANS_REPONSE = "sans_reponse_17h";
+const SB_ACTIONS_ADMIN_MUTANTES = new Set([
+  "modifier_statut_competition",
+  "creer_competition",
+  "modifier_competition",
+  "ajouter_date",
+  "supprimer_date",
+  "supprimer_competition",
+  "ajouter_joueur",
+  "modifier_joueur",
+  "supprimer_joueur"
+]);
+
+function sbResultat(data) {
+  return Array.isArray(data) ? data[0] : data;
+}
+
+async function sbRpc(nom, parametres, messageErreur) {
+  const controleur = new AbortController();
+  const delai = setTimeout(function () { controleur.abort(); }, MPP_CONFIG.rpcTimeoutMs);
+  try {
+    const requete = supabaseClient.rpc(nom, parametres || {});
+    const promesse = typeof requete?.abortSignal === "function"
+      ? requete.abortSignal(controleur.signal)
+      : requete;
+    const { data, error } = await Promise.race([
+      promesse,
+      new Promise(function (_resoudre, rejeter) {
+        controleur.signal.addEventListener("abort", function () {
+          rejeter(new Error("RPC_TIMEOUT"));
+        }, { once: true });
+      })
+    ]);
+    if (error) {
+      if (controleur.signal.aborted) {
+        MPPLogger.avertissement("rpc_timeout_" + nom);
+        return { ...sbErreur("Le service met plus de temps que prévu."), code: "RPC_TIMEOUT" };
+      }
+      MPPLogger.avertissement("rpc_echec_" + nom);
+      return sbErreur(messageErreur || "Service temporairement indisponible.");
+    }
+    return sbResultat(data) || sbErreur(messageErreur || "Réponse serveur invalide.");
+  } catch (erreur) {
+    if (controleur.signal.aborted || erreur?.message === "RPC_TIMEOUT") {
+      MPPLogger.avertissement("rpc_timeout_" + nom);
+      return { ...sbErreur("Le service met plus de temps que prévu."), code: "RPC_TIMEOUT" };
+    }
+    MPPLogger.avertissement("rpc_indisponible_" + nom);
+    return sbErreur(messageErreur || "Service temporairement indisponible.");
+  } finally {
+    clearTimeout(delai);
+  }
+}
+
+async function sbApiJoueur(action, payload) {
+  const token = MPPSession.lireSessionJoueur();
+  if (!token) return { ...sbErreur("Session expirée. Reconnectez-vous."), code: "SESSION_EXPIREE", porteeSession: "joueur" };
+  const resultat = await sbRpc("api_joueur_site", {
+    p_session_token: token,
+    p_action: action,
+    p_payload: payload || {}
+  }, "Action joueur indisponible.");
+  if (resultat?.code === "SESSION_EXPIREE") {
+    MPPSession.toutEffacer();
+    resultat.porteeSession = "joueur";
+  }
+  return resultat;
+}
+
+async function sbApiAdmin(action, payload) {
+  const token = MPPSession.lireSessionAdmin();
+  if (!token) return { ...sbErreur("Session officier expirée. Validez de nouveau votre accès."), code: "SESSION_EXPIREE", porteeSession: "admin" };
+
+  const mutation = SB_ACTIONS_ADMIN_MUTANTES.has(action);
+  if (mutation && typeof globalThis.crypto?.randomUUID !== "function") {
+    return { ...sbErreur("Cette action n’est pas disponible dans ce navigateur."), code: "CLIENT_INCOMPATIBLE" };
+  }
+
+  const operationId = mutation ? globalThis.crypto.randomUUID() : "";
+  const payloadOperation = mutation
+    ? { ...(payload || {}), operationId }
+    : (payload || {});
+  const parametres = {
+    p_session_token: token,
+    p_action: action,
+    p_payload: payloadOperation
+  };
+  let resultat = await sbRpc("api_admin_site", parametres, "Action officier indisponible.");
+  if (mutation && resultat?.code === "RPC_TIMEOUT") {
+    resultat = await sbRpc("api_admin_site", parametres, "Action officier indisponible.");
+    if (resultat?.code === "RPC_TIMEOUT") {
+      resultat = {
+        ...sbErreur("Le résultat de l’action n’a pas pu être confirmé. Actualisez l’écran et vérifiez son état avant toute nouvelle tentative."),
+        code: "RESULTAT_INDETERMINE"
+      };
+    }
+  }
+  if (resultat?.code === "SESSION_EXPIREE") {
+    MPPSession.effacerSessionAdmin();
+    resultat.porteeSession = "admin";
+  } else if (resultat?.succes) {
+    MPPSession.notifierActiviteAdmin();
+  }
+  return resultat;
+}
 
 /* ==========================================================
    OUTILS GÉNÉRAUX
@@ -28,7 +135,7 @@ function sbTexte(valeur) {
 function sbDiscordId(valeur) {
   const texte = sbTexte(valeur);
   if (!texte) return "";
-  return /^\d+$/.test(texte) ? texte : null;
+  return /^\d{17,20}$/.test(texte) ? texte : null;
 }
 
 function sbHeureHHMM(valeur) {
@@ -36,13 +143,8 @@ function sbHeureHHMM(valeur) {
   return match ? match[1] + ":" + match[2] : "";
 }
 
-function sbCleRappelJour(idCompetition, heure) {
-  return Number(idCompetition) + "|" + sbHeureHHMM(heure);
-}
-
-function sbHeureRappelPresenceOuNull(rappelActif, heure) {
-  if (!rappelActif) return null;
-  return sbHeureHHMM(heure) || null;
+function sbCleRappelJour(idCompetition) {
+  return String(Number(idCompetition));
 }
 
 function sbCle(valeur) {
@@ -63,14 +165,10 @@ function sbRolesArray(roles) {
     .filter(Boolean);
 }
 
-function sbEstSuperAdminPseudo(pseudo) {
-  return sbCle(pseudo) === "raiju153";
-}
-
 function sbEstOfficierJoueur(joueur) {
   if (!joueur) return false;
-  if (sbEstSuperAdminPseudo(joueur.pseudo)) return true;
-  return sbRolesArray(joueur.roles).includes("officier");
+  const roles = sbRolesArray(joueur.roles);
+  return roles.includes("officier") || roles.includes("superadmin");
 }
 
 function sbFormatDateFR(dateIso) {
@@ -173,12 +271,15 @@ function sbJoueurObj(joueur) {
     pseudo: joueur.pseudo,
     roles: joueur.roles,
     statut: joueur.statut,
-    discordId: joueur.discord_id || "",
-    discordUsername: joueur.discord_username || "",
-    discordLieA: joueur.discord_lie_a || "",
-    dateAjout: joueur.date_ajout,
-    derniereConnexion: joueur.derniere_connexion,
-    derniereModification: joueur.derniere_modification
+    discordId: joueur.discordId || joueur.discord_id || "",
+    discordUsername: joueur.discordUsername || joueur.discord_username || "",
+    discordLieA: joueur.discordLieA || joueur.discord_lie_a || "",
+    discordLie: joueur.discordLie === true || Boolean(joueur.discord_id),
+    dateAjout: joueur.dateAjout || joueur.date_ajout,
+    derniereConnexion: joueur.derniereConnexion || joueur.derniere_connexion,
+    derniereModification: joueur.derniereModification || joueur.derniere_modification,
+    codeAccesConfigure: joueur.codeAccesConfigure === true,
+    credentialAdminConfigure: joueur.credentialAdminConfigure === true
   };
 }
 
@@ -200,28 +301,6 @@ function sbErreur(message, details) {
     message: message || "Erreur Supabase.",
     details: details || ""
   };
-}
-
-async function sbNomCompetitionDepuisId(idCompetition) {
-  const idComp = Number(idCompetition);
-  if (!idComp) return "Compétition inconnue";
-
-  if (sbCacheNomsCompetitions[idComp]) {
-    return sbCacheNomsCompetitions[idComp];
-  }
-
-  const { data, error } = await supabaseClient
-    .from("competitions")
-    .select("nom")
-    .eq("id", idComp)
-    .limit(1);
-
-  if (error || !data || data.length === 0) {
-    return "Compétition inconnue";
-  }
-
-  sbCacheNomsCompetitions[idComp] = data[0].nom || "Compétition inconnue";
-  return sbCacheNomsCompetitions[idComp];
 }
 
 function sbExtraireIdsCompetitionsJournal(lignesJournal) {
@@ -252,16 +331,8 @@ async function sbChargerNomsCompetitionsJournal(idsCompetition) {
     return;
   }
 
-  const { data, error } = await supabaseClient
-    .from("competitions")
-    .select("id,nom")
-    .in("id", idsACharger);
-
-  if (error) {
-    return;
-  }
-
-  (data || []).forEach(function (competition) {
+  const resultat = await sbApiAdmin("competitions", {});
+  (resultat.competitions || []).forEach(function (competition) {
     sbCacheNomsCompetitions[Number(competition.id)] = competition.nom || "Compétition inconnue";
   });
 
@@ -323,9 +394,19 @@ function sbJoueurAutorisePourCompetition(joueur, competition) {
 }
 
 function sbJoueurDiscordLie(joueur) {
+  if (joueur?.discordLie === true) return true;
   const discordId = sbTexte(joueur?.discord_id);
   const discordLieA = sbTexte(joueur?.discord_lie_a);
   return Boolean(discordId && discordLieA && /^\d+$/.test(discordId));
+}
+
+function sbJson(valeur, valeurParDefaut) {
+  if (valeur && typeof valeur === "object") return valeur;
+  try {
+    return JSON.parse(String(valeur || ""));
+  } catch (_erreur) {
+    return valeurParDefaut;
+  }
 }
 
 function sbPresenceJourSansReponse(presences) {
@@ -411,19 +492,14 @@ function sbCalculerEffectifHoraireJour(dateInfo, lignes) {
         return;
       }
 
-      if (statut === "Remplaçant") {
-        stats.remplacants++;
-        return;
-      }
-
       const horairesDisponibles = sbTexte(dispo?.horairesDisponibles)
         .split(",")
         .map(function (h) { return h.trim(); })
         .filter(Boolean);
 
-      if (horairesDisponibles.includes(horaire)) {
-        stats.presents++;
-      }
+      if (!horairesDisponibles.includes(horaire)) return;
+      if (statut === "Remplaçant") stats.remplacants++;
+      else if (statut === "Présent") stats.presents++;
     });
 
     return stats;
@@ -446,34 +522,6 @@ function sbStatutRappelJour(competition, rappel, lectureRappelDisponible) {
   if (sbTexte(rappel.envoye_a)) return "envoye";
 
   return "pas_encore_envoye";
-}
-
-function sbHorairesJournal(horaires) {
-  return sbTexte(horaires)
-    .split(",")
-    .map(function (horaire) { return horaire.trim(); })
-    .filter(Boolean)
-    .join(", ");
-}
-
-function sbLibelleChangementPresence(ancienStatut, nouveauStatut) {
-  const cle = ancienStatut + " → " + nouveauStatut;
-  const libelles = {
-    "Présent → Absent": "Désistement",
-    "Absent → Présent": "Disponibilité ajoutée",
-    "Présent → Remplaçant": "Passage en remplaçant",
-    "Remplaçant → Présent": "Passage en présent",
-    "Absent → Remplaçant": "Passage en remplaçant",
-    "Remplaçant → Absent": "Retrait de disponibilité",
-    "Non renseigné → Présent": "Présence ajoutée",
-    "Non renseigné → Absent": "Absence renseignée",
-    "Non renseigné → Remplaçant": "Remplacement proposé",
-    "Présent → Non renseigné": "Réponse supprimée",
-    "Absent → Non renseigné": "Réponse supprimée",
-    "Remplaçant → Non renseigné": "Réponse supprimée"
-  };
-
-  return libelles[cle] || "Réponse modifiée";
 }
 
 function sbActionJournalLisible(action) {
@@ -526,49 +574,49 @@ function sbDetailsJournalLisibles(details) {
   return texte;
 }
 
-async function sbJournaliser(utilisateur, action, details) {
-  console.warn("Journalisation frontend désactivée : utiliser une RPC ou une Edge Function.");
-  return { succes: true };
-}
-
 /* ==========================================================
    API SUPABASE : ROUTEUR COMPATIBLE AVEC app.js
    ========================================================== */
 
 async function apiSupabase(action, parametres) {
+  parametres = parametres || {};
   switch (action) {
     case "identifierUtilisateur":
-      return identifierUtilisateurSupabase(parametres.pseudo);
+      return identifierUtilisateurSupabase(parametres.pseudo, parametres.codeAcces);
+
+    case "restaurerSession":
+      return restaurerSessionSupabase();
+
+    case "fermerSession":
+      return fermerSessionSupabase();
 
     case "chargerCompetitions":
-      return chargerCompetitionsSupabase();
+      return chargerCompetitionsSupabase(parametres.portee);
 
     case "chargerDatesCompetition":
-      return chargerDatesCompetitionSupabase(parametres.idCompetition);
+      return chargerDatesCompetitionSupabase(parametres.idCompetition, parametres.portee);
 
     case "chargerPresencesJoueur":
-      return chargerPresencesJoueurSupabase(parametres.idCompetition, parametres.pseudo);
+      return chargerPresencesJoueurSupabase(parametres.idCompetition);
 
     case "chargerCompetitionComplete":
-      return chargerCompetitionCompleteSupabase(parametres.idCompetition, parametres.pseudo);
+      return chargerCompetitionCompleteSupabase(parametres.idCompetition);
 
     case "sauvegarderPresences":
       return sauvegarderPresencesSupabase(
         parametres.idCompetition,
-        parametres.pseudo,
-        JSON.parse(parametres.presences || "[]")
+        sbJson(parametres.presences, [])
       );
 
     case "chargerDonneesOfficierInitiales":
       return chargerDonneesOfficierInitialesSupabase();
 
     case "chargerAujourdHuiOfficier":
-      return chargerAujourdHuiOfficierSupabase(parametres.utilisateur);
+      return chargerAujourdHuiOfficierSupabase();
 
     case "genererTableauPresences":
       return genererTableauPresencesSupabase(
-        parametres.idCompetition,
-        parametres.utilisateur
+        parametres.idCompetition
       );
 
     case "chargerJoueursSansReponse":
@@ -577,23 +625,17 @@ async function apiSupabase(action, parametres) {
     case "modifierStatutCompetition":
       return modifierStatutCompetitionSupabase(
         parametres.idCompetition,
-        parametres.nouveauStatut,
-        parametres.utilisateur,
-        parametres.motDePasse
+        parametres.nouveauStatut
       );
 
     case "creerCompetitionComplete":
       return creerCompetitionCompleteSupabase(
-        JSON.parse(parametres.config || "{}"),
-        parametres.utilisateur,
-        parametres.motDePasse
+        sbJson(parametres.config, {})
       );
 
     case "modifierCompetitionComplete":
       return modifierCompetitionCompleteSupabase(
-        JSON.parse(parametres.config || "{}"),
-        parametres.utilisateur,
-        parametres.motDePasse
+        sbJson(parametres.config, {})
       );
 
     case "chargerJoueurs":
@@ -604,9 +646,9 @@ async function apiSupabase(action, parametres) {
         parametres.pseudo,
         parametres.roles,
         parametres.statut,
-        parametres.utilisateur,
         parametres.discordId,
-        parametres.motDePasse
+        parametres.codeAcces,
+        parametres.motDePasseAdminInitial
       );
 
     case "modifierJoueur":
@@ -615,67 +657,62 @@ async function apiSupabase(action, parametres) {
         parametres.pseudo,
         parametres.roles,
         parametres.statut,
-        parametres.utilisateur,
         parametres.discordId,
-        parametres.motDePasse
+        parametres.codeAcces,
+        parametres.motDePasseAdminInitial
       );
 
     case "genererCodeLiaisonDiscord":
-      return genererCodeLiaisonDiscordSupabase(parametres.pseudo);
+      return genererCodeLiaisonDiscordSupabase();
 
     case "chargerDemandesLiaisonDiscord":
-      return chargerDemandesLiaisonDiscordSupabase(
-        parametres.utilisateur,
-        parametres.motDePasse
-      );
+      return chargerDemandesLiaisonDiscordSupabase();
 
     case "validerDemandeLiaisonDiscord":
-      return validerDemandeLiaisonDiscordSupabase(
-        parametres.idDemande,
-        parametres.utilisateur,
-        parametres.motDePasse
-      );
+      return validerDemandeLiaisonDiscordSupabase(parametres.idDemande);
 
     case "refuserDemandeLiaisonDiscord":
       return refuserDemandeLiaisonDiscordSupabase(
         parametres.idDemande,
-        parametres.utilisateur,
-        parametres.motDePasse,
         parametres.raison
       );
 
     case "supprimerJoueur":
-      return supprimerJoueurSupabase(
-        parametres.idJoueur,
-        parametres.utilisateur,
-        parametres.motDePasse
-      );
+      return supprimerJoueurSupabase(parametres.idJoueur);
 
     case "ajouterDateCompetition":
       return ajouterDateCompetitionSupabase(
         parametres.idCompetition,
         parametres.dateCompetition,
-        parametres.utilisateur,
-        parametres.horaires,
-        parametres.motDePasse
+        parametres.horaires
       );
 
     case "supprimerDateCompetition":
-      return supprimerDateCompetitionSupabase(
-        parametres.idDate,
-        parametres.utilisateur,
-        parametres.motDePasse
-      );
+      return supprimerDateCompetitionSupabase(parametres.idDate);
 
     case "supprimerCompetition":
-      return supprimerCompetitionSupabase(
-        parametres.idCompetition,
-        parametres.utilisateur,
-        parametres.motDePasse
-      );
+      return supprimerCompetitionSupabase(parametres.idCompetition);
 
     case "chargerJournalActivite":
       return chargerJournalActiviteSupabase();
+
+    case "changerCodeAcces":
+      return changerCodeAccesSupabase(
+        parametres.codeActuel,
+        parametres.nouveauCode
+      );
+
+    case "verifierMotDePasse":
+      return verifierMotDePasseSupabase(
+        parametres.pseudo,
+        parametres.motDePasse
+      );
+
+    case "changerMotDePasse":
+      return changerMotDePasseSupabase(
+        parametres.pseudo,
+        parametres.nouveauMdp
+      );
 
     default:
       return sbErreur("Action Supabase inconnue : " + action);
@@ -683,13 +720,18 @@ async function apiSupabase(action, parametres) {
 }
 
 function sbNormaliserReponseEdgeFunction(data, messageDefaut) {
-  const reponse = { ...(data || {}) };
+  if (!data || typeof data !== "object") {
+    return sbErreur("Réponse serveur invalide.");
+  }
+  const reponse = { ...data };
 
-  if (reponse.succes === false || reponse.success === false) {
-    return sbErreur(
+  if (reponse.succes !== true && reponse.success !== true) {
+    const erreur = sbErreur(
       reponse.message || reponse.error || "Erreur Edge Function.",
-      reponse.details || ""
+      ""
     );
+    if (sbTexte(reponse.code)) erreur.code = sbTexte(reponse.code);
+    return erreur;
   }
 
   reponse.succes = true;
@@ -700,6 +742,96 @@ function sbNormaliserReponseEdgeFunction(data, messageDefaut) {
   return reponse;
 }
 
+async function sbLireCorpsErreurEdge(error) {
+  const contexte = error?.context;
+  if (!contexte) return null;
+  if (typeof contexte.json !== "function") {
+    return typeof contexte === "object" ? contexte : null;
+  }
+  try {
+    const reponse = typeof contexte.clone === "function" ? contexte.clone() : contexte;
+    return await reponse.json();
+  } catch (_erreur) {
+    return null;
+  }
+}
+
+function sbExpirationSession(portee) {
+  if (portee === "admin") {
+    MPPSession.effacerSessionAdmin();
+    return {
+      ...sbErreur("Session officier expirée. Validez de nouveau votre accès."),
+      code: "SESSION_EXPIREE",
+      porteeSession: "admin"
+    };
+  }
+  MPPSession.toutEffacer();
+  return {
+    ...sbErreur("Session expirée. Reconnectez-vous."),
+    code: "SESSION_EXPIREE",
+    porteeSession: "joueur"
+  };
+}
+
+async function sbAppelerEdge(nomFonction, body, options) {
+  const portee = options?.portee === "admin" ? "admin" : "joueur";
+  const session = portee === "admin"
+    ? MPPSession.lireSessionAdmin()
+    : MPPSession.lireSessionJoueur();
+  if (!session) return sbExpirationSession(portee);
+  const controleur = new AbortController();
+  const delai = setTimeout(function () { controleur.abort(); }, MPP_CONFIG.edgeTimeoutMs);
+  try {
+    const invocation = supabaseClient.functions.invoke(nomFonction, {
+      body: body || {},
+      signal: controleur.signal
+    });
+    const { data, error } = await Promise.race([
+      invocation,
+      new Promise(function (_resoudre, rejeter) {
+        controleur.signal.addEventListener("abort", function () {
+          rejeter(new Error("EDGE_TIMEOUT"));
+        }, { once: true });
+      })
+    ]);
+    let reponse = data;
+    if (error) {
+      if (controleur.signal.aborted) {
+        MPPLogger.avertissement("edge_timeout_" + nomFonction);
+        return {
+          ...sbErreur("Le service met plus de temps que prévu."),
+          code: "EDGE_TIMEOUT"
+        };
+      }
+      MPPLogger.avertissement("edge_echec_" + nomFonction);
+      const corpsErreur = await sbLireCorpsErreurEdge(error);
+      if (!corpsErreur) {
+        return sbErreur(options?.messageErreur || "Service temporairement indisponible.");
+      }
+      reponse = { ...corpsErreur, succes: false, success: false };
+    }
+    const resultat = sbNormaliserReponseEdgeFunction(reponse, options?.messageSucces);
+    if (resultat?.code === "SESSION_EXPIREE") {
+      return { ...sbExpirationSession(portee), message: resultat.message };
+    } else if (resultat?.succes && portee === "admin") {
+      MPPSession.notifierActiviteAdmin();
+    }
+    return resultat;
+  } catch (erreur) {
+    if (controleur.signal.aborted || erreur?.message === "EDGE_TIMEOUT") {
+      MPPLogger.avertissement("edge_timeout_" + nomFonction);
+      return {
+        ...sbErreur("Le service met plus de temps que prévu."),
+        code: "EDGE_TIMEOUT"
+      };
+    }
+    MPPLogger.avertissement("edge_indisponible_" + nomFonction);
+    return sbErreur(options?.messageErreur || "Service temporairement indisponible.");
+  } finally {
+    clearTimeout(delai);
+  }
+}
+
 function sbListeDemandesDiscord(data) {
   return data?.demandes ||
     data?.demandesEnAttente ||
@@ -708,181 +840,144 @@ function sbListeDemandesDiscord(data) {
     [];
 }
 
-async function genererCodeLiaisonDiscordSupabase(pseudo) {
-  const { data, error } = await supabaseClient.functions.invoke(
-    "discord-link-code",
-    {
-      body: {
-        pseudo: sbTexte(pseudo)
-      }
+async function genererCodeLiaisonDiscordSupabase() {
+  if (typeof globalThis.crypto?.randomUUID !== "function") {
+    return {
+      ...sbErreur("Cette action n'est pas disponible dans ce navigateur."),
+      code: "CLIENT_INCOMPATIBLE"
+    };
+  }
+  const parametres = {
+    sessionToken: MPPSession.lireSessionJoueur(),
+    operationId: globalThis.crypto.randomUUID()
+  };
+  const options = {
+    portee: "joueur",
+    messageErreur: "Impossible de générer le code de liaison.",
+    messageSucces: "Code de liaison Discord généré."
+  };
+  let resultat = await sbAppelerEdge("discord-link-code", parametres, options);
+  if (resultat?.code === "EDGE_TIMEOUT") {
+    resultat = await sbAppelerEdge("discord-link-code", parametres, options);
+    if (resultat?.code === "EDGE_TIMEOUT") {
+      return {
+        ...sbErreur("Le résultat n'a pas pu être confirmé. Patientez une minute, puis vérifiez avant de générer un nouveau code."),
+        code: "RESULTAT_INDETERMINE"
+      };
     }
-  );
-
-  if (error) return sbErreur(error.message);
-
-  return sbNormaliserReponseEdgeFunction(data, "Code de liaison Discord généré.");
+  }
+  return resultat;
 }
 
-async function chargerDemandesLiaisonDiscordSupabase(utilisateur, motDePasse) {
-  const { data, error } = await supabaseClient.functions.invoke(
-    "discord-link-admin",
-    {
-      body: {
-        action: "lister",
-        utilisateur: sbTexte(utilisateur),
-        motDePasse: sbTexte(motDePasse)
-      }
-    }
-  );
-
-  if (error) return sbErreur(error.message);
-
-  const reponse = sbNormaliserReponseEdgeFunction(data, "Demandes chargées.");
+async function chargerDemandesLiaisonDiscordSupabase() {
+  const reponse = await sbAppelerEdge("discord-link-admin", {
+    action: "lister",
+    sessionToken: MPPSession.lireSessionAdmin()
+  }, {
+    portee: "admin",
+    messageErreur: "Impossible de charger les demandes Discord.",
+    messageSucces: "Demandes chargées."
+  });
   if (reponse.succes) {
-    reponse.demandes = sbListeDemandesDiscord(data);
+    reponse.demandes = sbListeDemandesDiscord(reponse);
   }
 
   return reponse;
 }
 
-async function validerDemandeLiaisonDiscordSupabase(idDemande, utilisateur, motDePasse) {
-  const { data, error } = await supabaseClient.functions.invoke(
-    "discord-link-admin",
-    {
-      body: {
-        action: "valider",
-        idDemande: sbTexte(idDemande),
-        utilisateur: sbTexte(utilisateur),
-        motDePasse: sbTexte(motDePasse)
-      }
-    }
-  );
-
-  if (error) return sbErreur(error.message);
-
-  return sbNormaliserReponseEdgeFunction(data, "Demande de liaison validée.");
+async function validerDemandeLiaisonDiscordSupabase(idDemande) {
+  return sbAppelerEdge("discord-link-admin", {
+    action: "valider",
+    idDemande: sbTexte(idDemande),
+    sessionToken: MPPSession.lireSessionAdmin()
+  }, {
+    portee: "admin",
+    messageErreur: "Impossible de valider la demande Discord.",
+    messageSucces: "Demande de liaison validée."
+  });
 }
 
-async function refuserDemandeLiaisonDiscordSupabase(idDemande, utilisateur, motDePasse, raison) {
-  const { data, error } = await supabaseClient.functions.invoke(
-    "discord-link-admin",
-    {
-      body: {
-        action: "refuser",
-        idDemande: sbTexte(idDemande),
-        utilisateur: sbTexte(utilisateur),
-        motDePasse: sbTexte(motDePasse),
-        raison: sbTexte(raison)
-      }
-    }
-  );
-
-  if (error) return sbErreur(error.message);
-
-  return sbNormaliserReponseEdgeFunction(data, "Demande de liaison refusée.");
+async function refuserDemandeLiaisonDiscordSupabase(idDemande, raison) {
+  return sbAppelerEdge("discord-link-admin", {
+    action: "refuser",
+    idDemande: sbTexte(idDemande),
+    sessionToken: MPPSession.lireSessionAdmin(),
+    raison: sbTexte(raison)
+  }, {
+    portee: "admin",
+    messageErreur: "Impossible de refuser la demande Discord.",
+    messageSucces: "Demande de liaison refusée."
+  });
 }
 
 /* ==========================================================
    JOUEURS / CONNEXION
    ========================================================== */
 
-async function identifierUtilisateurSupabase(pseudo) {
-  const pseudoRecherche = sbTexte(pseudo);
+async function identifierUtilisateurSupabase(pseudo, codeAcces) {
+  const resultat = await sbRpc("ouvrir_session_joueur_site", {
+    p_pseudo: sbTexte(pseudo),
+    p_code_acces: String(codeAcces || "")
+  }, "Identification impossible.");
 
-  const { data, error } = await supabaseClient
-    .from("joueurs")
-    .select("id,pseudo,roles,statut,discord_id,discord_username,discord_lie_a")
-    .ilike("pseudo", pseudoRecherche)
-    .limit(1);
-
-  if (error) return sbErreur(error.message);
-
-  if (!data || data.length === 0) {
-    return sbErreur("Pseudo non autorisé. Merci de contacter un officier.");
+  if (!resultat?.succes || !resultat.sessionToken || !resultat.joueur) {
+    return sbErreur(resultat?.message || "Identification impossible.");
   }
 
-  const joueurBrut = data[0];
-
-  if (sbCle(joueurBrut.statut) !== "actif") {
-    return sbErreur("Ce joueur n'est pas actif.");
-  }
-
-  const { data: connexionRPC, error: erreurConnexionRPC } = await supabaseClient.rpc(
-    "enregistrer_connexion_joueur_site",
-    { p_pseudo: pseudoRecherche }
-  );
-
-  if (erreurConnexionRPC) {
-    console.warn("RPC enregistrer_connexion_joueur_site : échec non bloquant.");
-  }
-
-  const resultatConnexion = Array.isArray(connexionRPC)
-    ? connexionRPC[0]
-    : connexionRPC;
-
-  const joueur = sbJoueurObj({
-    ...joueurBrut,
-    derniere_connexion: resultatConnexion?.derniereConnexion ||
-      resultatConnexion?.derniere_connexion ||
-      new Date().toISOString()
-  });
-
+  MPPSession.definirSessionJoueur(resultat.sessionToken);
+  const joueur = sbJoueurObj(resultat.joueur);
   const estOfficier = sbEstOfficierJoueur(joueur);
-
   return {
     succes: true,
     type: estOfficier ? "officier" : "joueur",
-    joueur: joueur,
-    officier: estOfficier
-      ? { id: joueur.id, pseudo: joueur.pseudo, permissions: "OFFICIER" }
-      : null
+    joueur,
+    officier: estOfficier ? { id: joueur.id, pseudo: joueur.pseudo, permissions: "OFFICIER" } : null
   };
+}
+
+async function restaurerSessionSupabase() {
+  const token = MPPSession.lireSessionJoueur();
+  if (!token) return sbErreur("Aucune session à restaurer.");
+  const resultat = await sbRpc("restaurer_session_site", { p_session_token: token }, "Session expirée.");
+  if (!resultat?.succes || !resultat.joueur) {
+    MPPSession.toutEffacer();
+    return { ...sbErreur(resultat?.message || "Session expirée."), code: "SESSION_EXPIREE", porteeSession: "joueur" };
+  }
+  const joueur = sbJoueurObj(resultat.joueur);
+  const estOfficier = sbEstOfficierJoueur(joueur);
+  return { succes: true, type: estOfficier ? "officier" : "joueur", joueur, officier: estOfficier ? { id: joueur.id, pseudo: joueur.pseudo, permissions: "OFFICIER" } : null };
+}
+
+async function fermerSessionSupabase() {
+  const tokens = [MPPSession.lireSessionAdmin(), MPPSession.lireSessionJoueur()].filter(Boolean);
+  await Promise.all(tokens.map(function (token) {
+    return sbRpc("fermer_session_site", { p_session_token: token }, "Session fermée localement.");
+  }));
+  MPPSession.toutEffacer();
+  return { succes: true };
 }
 
 async function chargerJoueursSupabase() {
-  const { data, error } = await supabaseClient
-    .from("joueurs")
-    .select("id,pseudo,roles,statut,discord_id,discord_username,discord_lie_a,derniere_connexion")
-    .order("pseudo", { ascending: true });
-
-  if (error) return sbErreur(error.message);
-
-  return {
-    succes: true,
-    joueurs: (data || []).map(sbJoueurObj)
-  };
+  const resultat = await sbApiAdmin("joueurs", {});
+  if (!resultat?.succes) return resultat;
+  return { succes: true, joueurs: (resultat.joueurs || []).map(sbJoueurObj) };
 }
 
-async function ajouterJoueurSupabase(pseudo, roles, statut, utilisateur, discordId, motDePasse) {
-  const motDePasseTexte = String(motDePasse || "");
+async function ajouterJoueurSupabase(pseudo, roles, statut, discordId, codeAcces, motDePasseAdminInitial) {
   const discordIdNettoye = sbDiscordId(discordId);
 
-  if (!motDePasseTexte) {
-    return sbErreur("Mot de passe officier requis pour ajouter un joueur.");
-  }
-
   if (discordIdNettoye === null) {
-    return sbErreur("L’ID Discord doit contenir uniquement des chiffres.");
+    return sbErreur("L’ID Discord doit contenir entre 17 et 20 chiffres.");
   }
 
-  const { data, error } = await supabaseClient.rpc(
-    "ajouter_joueur_site",
-    {
-      p_utilisateur: sbTexte(utilisateur),
-      p_mot_de_passe: motDePasseTexte,
-      p_pseudo: sbTexte(pseudo),
-      p_roles: sbTexte(roles) || "Soldat",
-      p_statut: sbTexte(statut) || "Actif",
-      p_discord_id: discordIdNettoye || null
-    }
-  );
-
-  if (error) {
-    console.warn("RPC ajouter_joueur_site : échec.");
-    return sbErreur("Ajout du joueur impossible.");
-  }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
+  const resultat = await sbApiAdmin("ajouter_joueur", {
+    pseudo: sbTexte(pseudo),
+    roles: sbTexte(roles) || "Soldat",
+    statut: sbTexte(statut) || "Actif",
+    discordId: discordIdNettoye || null,
+    codeAcces: String(codeAcces || ""),
+    motDePasseAdminInitial: String(motDePasseAdminInitial || "")
+  });
   const succesRPC = resultat?.succes === true || resultat?.success === true;
 
   if (!resultat || !succesRPC) {
@@ -901,40 +996,25 @@ async function modifierJoueurSupabase(
   pseudo,
   roles,
   statut,
-  utilisateur,
   discordId,
-  motDePasse
+  codeAcces,
+  motDePasseAdminInitial
 ) {
-  const motDePasseTexte = String(motDePasse || "");
   const nouveauDiscordId = sbDiscordId(discordId);
 
-  if (!motDePasseTexte) {
-    return sbErreur("Mot de passe officier requis pour modifier un joueur.");
-  }
-
   if (nouveauDiscordId === null) {
-    return sbErreur("L’ID Discord doit contenir uniquement des chiffres.");
+    return sbErreur("L’ID Discord doit contenir entre 17 et 20 chiffres.");
   }
 
-  const { data, error } = await supabaseClient.rpc(
-    "modifier_joueur_site",
-    {
-      p_utilisateur: sbTexte(utilisateur),
-      p_mot_de_passe: motDePasseTexte,
-      p_id_joueur: Number(idJoueur),
-      p_pseudo: sbTexte(pseudo),
-      p_roles: sbTexte(roles),
-      p_statut: sbTexte(statut),
-      p_discord_id: nouveauDiscordId || null
-    }
-  );
-
-  if (error) {
-    console.warn("RPC modifier_joueur_site : échec.");
-    return sbErreur("Modification du joueur impossible.");
-  }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
+  const resultat = await sbApiAdmin("modifier_joueur", {
+    idJoueur: Number(idJoueur),
+    pseudo: sbTexte(pseudo),
+    roles: sbTexte(roles),
+    statut: sbTexte(statut),
+    discordId: nouveauDiscordId || null,
+    codeAcces: String(codeAcces || ""),
+    motDePasseAdminInitial: String(motDePasseAdminInitial || "")
+  });
   const succesRPC = resultat?.succes === true || resultat?.success === true;
 
   if (!resultat || !succesRPC) {
@@ -947,189 +1027,61 @@ async function modifierJoueurSupabase(
   };
 }
 
-async function supprimerJoueurSupabase(idJoueur, utilisateur, motDePasse) {
-  const utilisateurTexte = sbTexte(utilisateur);
-  const motDePasseTexte = String(motDePasse || "");
-
-  if (!(await sbUtilisateurEstSuperAdmin(utilisateurTexte))) {
-    return sbErreur("Accès refusé : seul un SuperAdmin peut supprimer un joueur.");
-  }
-
-  if (!motDePasseTexte) {
-    return sbErreur("Mot de passe SuperAdmin requis pour supprimer un joueur.");
-  }
-
-  const { data: joueurs, error: erreurJoueur } = await supabaseClient
-    .from("joueurs")
-    .select("id,pseudo,roles,statut")
-    .eq("id", Number(idJoueur))
-    .limit(1);
-
-  if (erreurJoueur) return sbErreur(erreurJoueur.message);
-
-  if (!joueurs || joueurs.length === 0) {
-    return sbErreur("Joueur introuvable.");
-  }
-
-  const joueur = joueurs[0];
-  const pseudoJoueur = sbTexte(joueur.pseudo);
-
-  if (!pseudoJoueur) {
-    return sbErreur("Joueur invalide.");
-  }
-
-  if (sbEstSuperAdminPseudo(pseudoJoueur) || sbRolesArray(joueur.roles).includes("superadmin")) {
-    return sbErreur("Impossible de supprimer un SuperAdmin.");
-  }
-
-  if (sbCle(pseudoJoueur) === sbCle(utilisateurTexte)) {
-    return sbErreur("Impossible de supprimer votre propre compte.");
-  }
-
-  const { data: resultatRPC, error: erreurRPC } = await supabaseClient.rpc(
-    "supprimer_joueur_site",
-    {
-      p_id_joueur: Number(idJoueur),
-      p_utilisateur: utilisateurTexte,
-      p_mot_de_passe: motDePasseTexte
-    }
-  );
-
-  if (erreurRPC) {
-    return sbErreur(
-      "Suppression impossible côté base : " + erreurRPC.message +
-        ". Vérifiez que la fonction SQL supprimer_joueur_site est installée dans Supabase."
-    );
-  }
-
-  const resultat = Array.isArray(resultatRPC)
-    ? resultatRPC[0]
-    : resultatRPC;
-
-  if (!resultat || resultat.succes !== true) {
-    return sbErreur(
-      resultat?.message ||
-        "La suppression du joueur n'a pas pu être confirmée côté base."
-    );
-  }
-
-  return {
-    succes: true,
-    message: resultat.message ||
-      "Joueur supprimé. Présences supprimées : " +
-        Number(resultat.nbPresencesSupprimees || 0) +
-        ".",
-    pseudo: resultat.pseudo || pseudoJoueur,
-    nbPresencesSupprimees: Number(resultat.nbPresencesSupprimees || 0),
-    nbDemandesDiscordSupprimees: Number(resultat.nbDemandesDiscordSupprimees || 0)
-  };
-}
-
-async function sbUtilisateurEstSuperAdmin(pseudo) {
-  if (sbEstSuperAdminPseudo(pseudo)) return true;
-
-  const { data, error } = await supabaseClient
-    .from("joueurs")
-    .select("pseudo,roles,statut")
-    .ilike("pseudo", sbTexte(pseudo))
-    .limit(1);
-
-  if (error || !data || data.length === 0) return false;
-
-  return sbCle(data[0].statut) === "actif" &&
-    sbRolesArray(data[0].roles).includes("superadmin");
-}
-
-async function sbUtilisateurEstOfficier(pseudo) {
-  const { data, error } = await supabaseClient
-    .from("joueurs")
-    .select("pseudo,roles,statut")
-    .ilike("pseudo", sbTexte(pseudo))
-    .limit(1);
-
-  if (error || !data || data.length === 0) return false;
-
-  return sbEstOfficierJoueur(data[0]);
+async function supprimerJoueurSupabase(idJoueur) {
+  return sbApiAdmin("supprimer_joueur", { idJoueur: Number(idJoueur) });
 }
 
 /* ==========================================================
    COMPÉTITIONS / DATES / PRÉSENCES
    ========================================================== */
 
-async function chargerCompetitionsSupabase() {
-  const { data, error } = await supabaseClient
-    .from("competitions")
-    .select("*")
-    .order("id", { ascending: false });
-
-  if (error) return sbErreur(error.message);
-
+async function chargerCompetitionsSupabase(portee) {
+  const resultat = portee === "admin"
+    ? await sbApiAdmin("competitions", {})
+    : await sbApiJoueur("competitions", {});
+  if (!resultat?.succes) return resultat;
   return {
     succes: true,
-    competitions: (data || []).map(sbCompetitionObj)
+    competitions: (resultat.competitions || []).map(sbCompetitionObj)
   };
 }
 
-async function chargerDatesCompetitionSupabase(idCompetition) {
-  const { data, error } = await supabaseClient
-    .from("dates_competition")
-    .select("*")
-    .eq("competition_id", Number(idCompetition))
-    .order("date_competition", { ascending: true });
-
-  if (error) return sbErreur(error.message);
-
+async function chargerDatesCompetitionSupabase(idCompetition, portee) {
+  const resultat = portee === "admin"
+    ? await sbApiAdmin("dates_competition", { idCompetition: Number(idCompetition) })
+    : await sbApiJoueur("dates_competition", { idCompetition: Number(idCompetition) });
+  if (!resultat?.succes) return resultat;
   return {
     succes: true,
-    dates: (data || []).map(sbDateObj)
+    dates: (resultat.dates || []).map(sbDateObj)
   };
 }
 
-async function chargerPresencesJoueurSupabase(idCompetition, pseudo) {
-  const { data, error } = await supabaseClient
-    .from("presences")
-    .select("*")
-    .eq("competition_id", Number(idCompetition))
-    .ilike("pseudo", sbTexte(pseudo));
-
-  if (error) return sbErreur(error.message);
-
+async function chargerPresencesJoueurSupabase(idCompetition) {
+  const resultat = await sbApiJoueur("competition_complete", { idCompetition: Number(idCompetition) });
+  if (!resultat?.succes) return resultat;
   return {
     succes: true,
-    presences: (data || []).map(sbPresenceObj)
+    presences: (resultat.presences || []).map(sbPresenceObj)
   };
 }
 
-async function chargerCompetitionCompleteSupabase(idCompetition, pseudo) {
-  const dates = await chargerDatesCompetitionSupabase(idCompetition);
-  if (!dates.succes) return dates;
-
-  const presences = await chargerPresencesJoueurSupabase(idCompetition, pseudo);
-  if (!presences.succes) return presences;
-
+async function chargerCompetitionCompleteSupabase(idCompetition) {
+  const resultat = await sbApiJoueur("competition_complete", { idCompetition: Number(idCompetition) });
+  if (!resultat?.succes) return resultat;
   return {
     succes: true,
-    dates: dates.dates,
-    presences: presences.presences
+    dates: (resultat.dates || []).map(sbDateObj),
+    presences: (resultat.presences || []).map(sbPresenceObj),
+    peutRemplir: resultat.competition?.statut === "Ouverte"
   };
 }
 
-async function sauvegarderPresencesSupabase(idCompetition, pseudo, presences) {
-  const { data, error } = await supabaseClient.rpc(
-    "sauvegarder_presences_site",
-    {
-      p_competition_id: Number(idCompetition),
-      p_pseudo: sbTexte(pseudo),
-      p_presences: presences || []
-    }
-  );
-
-  if (error) {
-    console.warn("RPC sauvegarder_presences_site : échec.");
-    return sbErreur("Sauvegarde des présences impossible.");
-  }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
+async function sauvegarderPresencesSupabase(idCompetition, presences) {
+  const resultat = await sbApiJoueur("sauvegarder_presences", {
+    idCompetition: Number(idCompetition),
+    presences: presences || []
+  });
   const succesRPC = resultat?.succes === true || resultat?.success === true;
 
   if (!resultat || !succesRPC) {
@@ -1146,28 +1098,17 @@ async function sauvegarderPresencesSupabase(idCompetition, pseudo, presences) {
   };
 }
 
-async function creerCompetitionCompleteSupabase(config, utilisateur, motDePasse) {
-  const motDePasseTexte = String(motDePasse || "");
+async function changerCodeAccesSupabase(codeActuel, nouveauCode) {
+  const resultat = await sbApiJoueur("changer_code_acces", {
+    codeActuel: String(codeActuel || ""),
+    nouveauCode: String(nouveauCode || "")
+  });
+  if (resultat?.succes) MPPSession.toutEffacer();
+  return resultat;
+}
 
-  if (!motDePasseTexte) {
-    return sbErreur("Mot de passe officier requis pour créer une compétition.");
-  }
-
-  const { data, error } = await supabaseClient.rpc(
-    "creer_competition_complete_site",
-    {
-      p_utilisateur: sbTexte(utilisateur),
-      p_mot_de_passe: motDePasseTexte,
-      p_config: config || {}
-    }
-  );
-
-  if (error) {
-    console.warn("RPC creer_competition_complete_site : échec.");
-    return sbErreur("Création de la compétition impossible.");
-  }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
+async function creerCompetitionCompleteSupabase(config) {
+  const resultat = await sbApiAdmin("creer_competition", { config: config || {} });
   const succesRPC = resultat?.succes === true || resultat?.success === true;
 
   if (!resultat || !succesRPC) {
@@ -1182,29 +1123,11 @@ async function creerCompetitionCompleteSupabase(config, utilisateur, motDePasse)
   };
 }
 
-async function modifierStatutCompetitionSupabase(idCompetition, nouveauStatut, utilisateur, motDePasse) {
-  const motDePasseTexte = String(motDePasse || "");
-
-  if (!motDePasseTexte) {
-    return sbErreur("Mot de passe officier requis.");
-  }
-
-  const { data, error } = await supabaseClient.rpc(
-    "modifier_statut_competition_site",
-    {
-      p_utilisateur: sbTexte(utilisateur),
-      p_mot_de_passe: motDePasseTexte,
-      p_competition_id: Number(idCompetition),
-      p_nouveau_statut: sbTexte(nouveauStatut)
-    }
-  );
-
-  if (error) {
-    console.warn("RPC modifier_statut_competition_site : échec.");
-    return sbErreur("Modification du statut impossible.");
-  }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
+async function modifierStatutCompetitionSupabase(idCompetition, nouveauStatut) {
+  const resultat = await sbApiAdmin("modifier_statut_competition", {
+    idCompetition: Number(idCompetition),
+    statut: sbTexte(nouveauStatut)
+  });
   const succesRPC = resultat?.succes === true || resultat?.success === true;
 
   if (!resultat || !succesRPC) {
@@ -1223,30 +1146,12 @@ async function modifierStatutCompetitionSupabase(idCompetition, nouveauStatut, u
   };
 }
 
-async function ajouterDateCompetitionSupabase(idCompetition, dateCompetition, utilisateur, horaires, motDePasse) {
-  const motDePasseTexte = String(motDePasse || "");
-
-  if (!motDePasseTexte) {
-    return sbErreur("Mot de passe officier requis pour ajouter une date.");
-  }
-
-  const { data, error } = await supabaseClient.rpc(
-    "ajouter_date_competition_site",
-    {
-      p_utilisateur: sbTexte(utilisateur),
-      p_mot_de_passe: motDePasseTexte,
-      p_competition_id: Number(idCompetition),
-      p_date_competition: sbFormatDateISO(dateCompetition),
-      p_horaires: horaires || ""
-    }
-  );
-
-  if (error) {
-    console.warn("RPC ajouter_date_competition_site : échec.");
-    return sbErreur("Ajout de la date impossible.");
-  }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
+async function ajouterDateCompetitionSupabase(idCompetition, dateCompetition, horaires) {
+  const resultat = await sbApiAdmin("ajouter_date", {
+    idCompetition: Number(idCompetition),
+    dateCompetition: sbFormatDateISO(dateCompetition),
+    horaires: horaires || ""
+  });
   const succesRPC = resultat?.succes === true || resultat?.success === true;
 
   if (!resultat || !succesRPC) {
@@ -1260,28 +1165,8 @@ async function ajouterDateCompetitionSupabase(idCompetition, dateCompetition, ut
   };
 }
 
-async function supprimerDateCompetitionSupabase(idDate, utilisateur, motDePasse) {
-  const motDePasseTexte = String(motDePasse || "");
-
-  if (!motDePasseTexte) {
-    return sbErreur("Mot de passe officier requis pour supprimer une date.");
-  }
-
-  const { data, error } = await supabaseClient.rpc(
-    "supprimer_date_competition_site",
-    {
-      p_utilisateur: sbTexte(utilisateur),
-      p_mot_de_passe: motDePasseTexte,
-      p_date_id: Number(idDate)
-    }
-  );
-
-  if (error) {
-    console.warn("RPC supprimer_date_competition_site : échec.");
-    return sbErreur("Suppression de la date impossible.");
-  }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
+async function supprimerDateCompetitionSupabase(idDate) {
+  const resultat = await sbApiAdmin("supprimer_date", { idDate: Number(idDate) });
   const succesRPC = resultat?.succes === true || resultat?.success === true;
 
   if (!resultat || !succesRPC) {
@@ -1294,28 +1179,10 @@ async function supprimerDateCompetitionSupabase(idDate, utilisateur, motDePasse)
   };
 }
 
-async function supprimerCompetitionSupabase(idCompetition, utilisateur, motDePasse) {
-  const motDePasseTexte = String(motDePasse || "");
-
-  if (!motDePasseTexte) {
-    return sbErreur("Mot de passe SuperAdmin requis pour supprimer une compétition.");
-  }
-
-  const { data, error } = await supabaseClient.rpc(
-    "supprimer_competition_site",
-    {
-      p_utilisateur: sbTexte(utilisateur),
-      p_mot_de_passe: motDePasseTexte,
-      p_competition_id: Number(idCompetition)
-    }
-  );
-
-  if (error) {
-    console.warn("RPC supprimer_competition_site : échec.");
-    return sbErreur("Suppression de la compétition impossible.");
-  }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
+async function supprimerCompetitionSupabase(idCompetition) {
+  const resultat = await sbApiAdmin("supprimer_competition", {
+    idCompetition: Number(idCompetition)
+  });
   const succesRPC = resultat?.succes === true || resultat?.success === true;
 
   if (!resultat || !succesRPC) {
@@ -1352,55 +1219,15 @@ function sbCalculerSyntheseJoueur(disponibilites) {
   return "🟠 Partiel";
 }
 
-async function chargerToutesPresencesCompetitionSupabase(idCompetition) {
-  const tailleLot = 1000;
-  let debut = 0;
-  let toutesLesPresences = [];
+async function genererTableauPresencesSupabase(idCompetition) {
+  const resultat = await sbApiAdmin("tableau_presences", {
+    idCompetition: Number(idCompetition)
+  });
+  if (!resultat?.succes) return resultat;
 
-  while (true) {
-    const { data, error } = await supabaseClient
-      .from("presences")
-      .select("*")
-      .eq("competition_id", Number(idCompetition))
-      .order("id", { ascending: true })
-      .range(debut, debut + tailleLot - 1);
-
-    if (error) return sbErreur(error.message);
-
-    const lot = data || [];
-    toutesLesPresences = toutesLesPresences.concat(lot);
-
-    if (lot.length < tailleLot) {
-      break;
-    }
-
-    debut += tailleLot;
-  }
-
-  return {
-    succes: true,
-    presences: toutesLesPresences
-  };
-}
-
-async function genererTableauPresencesSupabase(idCompetition, utilisateur) {
-  if (
-    !sbEstSuperAdminPseudo(utilisateur) &&
-    !(await sbUtilisateurEstOfficier(utilisateur))
-  ) {
-    return sbErreur("Accès refusé : seul un officier peut consulter ce tableau.");
-  }
-
-  const datesResultat = await chargerDatesCompetitionSupabase(idCompetition);
-  if (!datesResultat.succes) return datesResultat;
-
-  const joueursResultat = await chargerJoueursSupabase();
-  if (!joueursResultat.succes) return joueursResultat;
-
-  const presencesResultat = await chargerToutesPresencesCompetitionSupabase(idCompetition);
-  if (!presencesResultat.succes) return presencesResultat;
-
-  const presences = presencesResultat.presences || [];
+  const datesResultat = { dates: (resultat.dates || []).map(sbDateObj) };
+  const joueursResultat = { joueurs: (resultat.joueurs || []).map(sbJoueurObj) };
+  const presences = resultat.presences || [];
 
   const joueursActifs = joueursResultat.joueurs.filter(function (joueur) {
     return sbCle(joueur.statut) === "actif";
@@ -1489,18 +1316,14 @@ async function genererTableauPresencesSupabase(idCompetition, utilisateur) {
 }
 
 async function chargerJoueursSansReponseSupabase(idCompetition) {
-  const joueursResultat = await chargerJoueursSupabase();
-  if (!joueursResultat.succes) return joueursResultat;
-
-  const { data, error } = await supabaseClient
-    .from("presences")
-    .select("pseudo,statut")
-    .eq("competition_id", Number(idCompetition));
-
-  if (error) return sbErreur(error.message);
+  const resultat = await sbApiAdmin("sans_reponse", {
+    idCompetition: Number(idCompetition)
+  });
+  if (!resultat?.succes) return resultat;
+  const joueursResultat = { joueurs: (resultat.joueurs || []).map(sbJoueurObj) };
 
   const repondants = new Set(
-    (data || [])
+    (resultat.presences || [])
       .filter(function (presence) {
         return sbPresenceEstRenseignee(presence.statut);
       })
@@ -1528,14 +1351,7 @@ async function chargerJoueursSansReponseSupabase(idCompetition) {
   };
 }
 
-async function chargerAujourdHuiOfficierSupabase(utilisateur) {
-  if (
-    !sbEstSuperAdminPseudo(utilisateur) &&
-    !(await sbUtilisateurEstOfficier(utilisateur))
-  ) {
-    return sbErreur("Accès refusé : seul un officier peut consulter la page Présences du jour.");
-  }
-
+async function chargerAujourdHuiOfficierSupabase() {
   const dateIso = sbDateIsoFranceAujourdhui();
   const dateInfoJour = {
     dateCompetition: sbFormatDateFR(dateIso),
@@ -1546,13 +1362,9 @@ async function chargerAujourdHuiOfficierSupabase(utilisateur) {
     horaires: ""
   };
 
-  const { data: datesJour, error: erreurDates } = await supabaseClient
-    .from("dates_competition")
-    .select("id,competition_id,date_competition,horaires")
-    .eq("date_competition", dateIso)
-    .order("competition_id", { ascending: true });
-
-  if (erreurDates) return sbErreur(erreurDates.message);
+  const resultat = await sbApiAdmin("aujourdhui", { date: dateIso });
+  if (!resultat?.succes) return resultat;
+  const datesJour = resultat.dates || [];
 
   const idsCompetitions = Array.from(new Set(
     (datesJour || []).map(function (date) {
@@ -1576,45 +1388,19 @@ async function chargerAujourdHuiOfficierSupabase(utilisateur) {
     };
   }
 
-  const { data: competitionsBrutes, error: erreurCompetitions } = await supabaseClient
-    .from("competitions")
-    .select("id,nom,statut,roles_autorises,description,rappel_presence_active,heure_rappel_presence")
-    .in("id", idsCompetitions);
-
-  if (erreurCompetitions) return sbErreur(erreurCompetitions.message);
-
-  const { data: joueursBruts, error: erreurJoueurs } = await supabaseClient
-    .from("joueurs")
-    .select("id,pseudo,roles,statut,discord_id,discord_username,discord_lie_a")
-    .order("pseudo", { ascending: true });
-
-  if (erreurJoueurs) return sbErreur(erreurJoueurs.message);
-
-  const { data: presencesJour, error: erreurPresences } = await supabaseClient
-    .from("presences")
-    .select("id,competition_id,pseudo,statut,horaires_disponibles,date_competition,derniere_modification")
-    .in("competition_id", idsCompetitions)
-    .eq("date_competition", dateIso)
-    .order("id", { ascending: true });
-
-  if (erreurPresences) return sbErreur(erreurPresences.message);
-
-  let rappelsJour = [];
-  let lectureRappelsDisponible = true;
-
-  const { data: rappelsData, error: erreurRappels } = await supabaseClient
-    .from("rappels_presence_discord")
-    .select("type_rappel,competition_id,date_competition,heure_programmee,statut,envoye_a,erreur,nb_joueurs,nb_mentions,nb_sans_discord,nb_messages,updated_at")
-    .eq("type_rappel", SB_TYPE_RAPPEL_PRESENCES_SANS_REPONSE)
-    .in("competition_id", idsCompetitions)
-    .eq("date_competition", dateIso)
-    .order("updated_at", { ascending: false });
-
-  if (erreurRappels) {
-    lectureRappelsDisponible = false;
-  } else {
-    rappelsJour = rappelsData || [];
-  }
+  const competitionsBrutes = resultat.competitions || [];
+  const joueursBruts = (resultat.joueurs || []).map(function (joueur) {
+    return {
+      ...joueur,
+      discord_username: joueur.discordUsername || "",
+      discordLie: joueur.discordLie === true
+    };
+  });
+  const presencesJour = resultat.presences || [];
+  const rappelsJour = (resultat.rappels || []).filter(function (rappel) {
+    return rappel.type_rappel === SB_TYPE_RAPPEL_PRESENCES_SANS_REPONSE;
+  });
+  const lectureRappelsDisponible = true;
 
   const competitionsParId = {};
   (competitionsBrutes || []).forEach(function (competition) {
@@ -1746,94 +1532,20 @@ async function chargerAujourdHuiOfficierSupabase(utilisateur) {
 }
 
 async function chargerDonneesOfficierInitialesSupabase() {
-  const joueursResultat = await chargerJoueursSupabase();
-  if (!joueursResultat.succes) return joueursResultat;
-
-  const competitionsResultat = await chargerCompetitionsSupabase();
-  if (!competitionsResultat.succes) return competitionsResultat;
-
-  const joueurs = joueursResultat.joueurs;
-  const competitions = competitionsResultat.competitions;
-
-  let total = 0;
-  let actifs = 0;
-  let inactifs = 0;
-  let suspendus = 0;
-  let connectes7Jours = 0;
-  let connectes30Jours = 0;
-  let inactifs30Jours = 0;
-  let jamaisConnectes = 0;
-
-  const maintenant = new Date();
-
-  joueurs.forEach(function (joueur) {
-    total++;
-
-    const statut = sbCle(joueur.statut);
-
-    if (statut === "actif") actifs++;
-    else if (statut === "inactif") inactifs++;
-    else if (statut === "suspendu") suspendus++;
-
-    if (!joueur.derniereConnexion) {
-      jamaisConnectes++;
-      return;
-    }
-
-    const dateConnexion = new Date(joueur.derniereConnexion);
-    const differenceJours = Math.floor((maintenant - dateConnexion) / (1000 * 60 * 60 * 24));
-
-    if (differenceJours <= 7) connectes7Jours++;
-    if (differenceJours <= 30) connectes30Jours++;
-    else inactifs30Jours++;
-  });
-
-  let ouvertes = 0;
-  let brouillon = 0;
-  let fermees = 0;
-  let archivees = 0;
-
-  competitions.forEach(function (competition) {
-    const statut = sbNormaliserStatut(competition.statut);
-
-    if (statut === "ouverte") ouvertes++;
-    else if (statut === "brouillon") brouillon++;
-    else if (statut === "fermee") fermees++;
-    else if (statut === "archivee") archivees++;
-  });
-
+  const resultat = await sbApiAdmin("dashboard", {});
+  if (!resultat?.succes) return resultat;
   return {
     succes: true,
-    joueurs: {
-      total: total,
-      actifs: actifs,
-      inactifs: inactifs,
-      suspendus: suspendus,
-      connectes7Jours: connectes7Jours,
-      connectes30Jours: connectes30Jours,
-      inactifs30Jours: inactifs30Jours,
-      jamaisConnectes: jamaisConnectes
-    },
-    competitions: {
-      ouvertes: ouvertes,
-      brouillon: brouillon,
-      fermees: fermees,
-      archivees: archivees
-    },
-    competitionsListe: competitions
+    joueurs: resultat.joueurs || {},
+    competitions: resultat.competitions || {},
+    competitionsListe: (resultat.competitionsListe || []).map(sbCompetitionObj)
   };
 }
 
 async function chargerJournalActiviteSupabase() {
-  const { data, error } = await supabaseClient
-    .from("journal_activite")
-    .select("date_heure,utilisateur,action,details")
-    .order("date_heure", { ascending: false })
-    .limit(50);
-
-  if (error) return sbErreur(error.message);
-
-  const lignesJournal = data || [];
+  const resultat = await sbApiAdmin("journal", { limite: 50 });
+  if (!resultat?.succes) return resultat;
+  const lignesJournal = resultat.journal || [];
   const idsCompetition = sbExtraireIdsCompetitionsJournal(lignesJournal);
   await sbChargerNomsCompetitionsJournal(idsCompetition);
 
@@ -1855,51 +1567,33 @@ async function chargerJournalActiviteSupabase() {
 }
 
 async function verifierMotDePasseSupabase(pseudo, mdp) {
-  const { data, error } = await supabaseClient.rpc(
-    "verifier_mot_de_passe_site",
-    {
-      p_utilisateur: sbTexte(pseudo),
-      p_mot_de_passe: String(mdp || "")
-    }
-  );
+  void pseudo;
+  const resultat = await sbRpc("ouvrir_session_admin_site", {
+    p_session_joueur: MPPSession.lireSessionJoueur(),
+    p_mot_de_passe: String(mdp || "")
+  }, "Authentification impossible.");
 
-  if (error) {
+  if (!resultat?.succes || !resultat.sessionToken) {
     return {
       succes: false,
-      message: "Impossible de vérifier le mot de passe."
+      message: resultat?.message || "Authentification impossible."
     };
   }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
-
-  if (!resultat || resultat.succes !== true) {
-    return {
-      succes: false,
-      message: resultat?.message || "Mot de passe incorrect."
-    };
-  }
-
-  return resultat;
+  MPPSession.definirSessionAdmin(resultat.sessionToken, resultat.expireA);
+  return {
+    succes: true,
+    message: resultat.message || "Accès officier validé.",
+    estOfficier: resultat.estOfficier === true,
+    estSuperAdmin: resultat.estSuperAdmin === true
+  };
 }
 
-async function changerMotDePasseSupabase(pseudo, ancienMdp, nouveauMdp) {
-  const { data, error } = await supabaseClient.rpc(
-    "changer_mot_de_passe_site",
-    {
-      p_utilisateur: sbTexte(pseudo),
-      p_ancien_mot_de_passe: String(ancienMdp || ""),
-      p_nouveau_mot_de_passe: String(nouveauMdp || "")
-    }
-  );
-
-  if (error) {
-    return {
-      succes: false,
-      message: "Impossible de modifier le mot de passe."
-    };
-  }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
+async function changerMotDePasseSupabase(pseudo, nouveauMdp) {
+  void pseudo;
+  const resultat = await sbRpc("changer_credential_session_site", {
+    p_session_admin: MPPSession.lireSessionAdmin(),
+    p_nouveau_mot_de_passe: String(nouveauMdp || "")
+  }, "Impossible de modifier le mot de passe.");
 
   if (!resultat || resultat.succes !== true) {
     return {
@@ -1908,38 +1602,12 @@ async function changerMotDePasseSupabase(pseudo, ancienMdp, nouveauMdp) {
     };
   }
 
+  MPPSession.toutEffacer();
   return resultat;
 }
 
-async function appliquerOuverturesFermeturesAutomatiquesSupabase() {
-  return {
-    succes: true,
-    message: "Ouvertures/fermetures automatiques gérées côté serveur."
-  };
-}
-
-async function modifierCompetitionCompleteSupabase(config, utilisateur, motDePasse) {
-  const motDePasseTexte = String(motDePasse || "");
-
-  if (!motDePasseTexte) {
-    return sbErreur("Mot de passe officier requis pour modifier une compétition.");
-  }
-
-  const { data, error } = await supabaseClient.rpc(
-    "modifier_competition_complete_site",
-    {
-      p_utilisateur: sbTexte(utilisateur),
-      p_mot_de_passe: motDePasseTexte,
-      p_config: config || {}
-    }
-  );
-
-  if (error) {
-    console.warn("RPC modifier_competition_complete_site : échec.");
-    return sbErreur("Modification de la compétition impossible.");
-  }
-
-  const resultat = Array.isArray(data) ? data[0] : data;
+async function modifierCompetitionCompleteSupabase(config) {
+  const resultat = await sbApiAdmin("modifier_competition", { config: config || {} });
   const succesRPC = resultat?.succes === true || resultat?.success === true;
 
   if (!resultat || !succesRPC) {

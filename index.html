@@ -3,24 +3,42 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://icguokxqrnqdjafqvzyz.supabase.co wss://icguokxqrnqdjafqvzyz.supabase.co; font-src 'self'; manifest-src 'self'; worker-src 'none'; upgrade-insecure-requests"
+    />
     <title>MPP Operations Center</title>
     <link rel="icon" href="images/logo_mpp_280.webp" type="image/webp" />
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=0.13.0" />
   </head>
   <body>
+    <a class="skip-link" href="#contenu">Aller au contenu</a>
     <main id="app" class="login-card">
-      <div class="logo-zone">
-        <img src="images/logo_mpp_280.webp" alt="Logo MPP" class="logo-mpp" />
+      <header class="logo-zone">
+        <img src="images/logo_mpp_280.webp" alt="MPP" class="logo-mpp" width="140" height="140" />
         <h1>MPP Operations Center</h1>
         <p>Gestion des compétitions World of Tanks</p>
-        <p id="version-site">Version Alpha 0.12.8.1 - Supabase</p>
-      </div>
+        <p id="version-site">Alpha 0.13.0 - Security &amp; Reliability</p>
+      </header>
 
-      <div id="contenu"></div>
+      <div id="app-status" class="app-status" role="status" aria-live="polite" aria-atomic="true"></div>
+      <div id="contenu" tabindex="-1" aria-live="polite"></div>
     </main>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase.js?v=0.12.8.1"></script>
-    <script src="app.js?v=0.12.8.1"></script>
+    <script defer src="vendor/supabase-js-2.95.0.min.js"></script>
+    <script defer src="js/config.js?v=0.13.0"></script>
+    <script defer src="js/logger.js?v=0.13.0"></script>
+    <script defer src="js/session-store.js?v=0.13.0"></script>
+    <script defer src="js/dialog.js?v=0.13.0"></script>
+    <script defer src="js/ui.js?v=0.13.0"></script>
+    <script defer src="js/state.js?v=0.13.0"></script>
+    <script defer src="js/joueurs.js?v=0.13.0"></script>
+    <script defer src="js/presences.js?v=0.13.0"></script>
+    <script defer src="js/competitions.js?v=0.13.0"></script>
+    <script defer src="js/discord.js?v=0.13.0"></script>
+    <script defer src="js/journal.js?v=0.13.0"></script>
+    <script defer src="supabase.js?v=0.13.0"></script>
+    <script defer src="app.js?v=0.13.0"></script>
   </body>
 </html>
