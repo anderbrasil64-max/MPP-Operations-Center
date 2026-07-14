@@ -874,8 +874,14 @@ set search_path = ''
 as $$
 declare
   v_ctx record;
-  v_action text := pg_catalog.lower(pg_catalog.btrim(coalesce(p_action, '')));
-  v_payload jsonb := coalesce(p_payload, '{}'::jsonb);
+  v_action text :=
+    pg_catalog.lower(
+      pg_catalog.btrim(
+        coalesce(p_action, ''::text)
+      )
+    );
+  v_payload jsonb :=
+    coalesce(p_payload, '{}'::jsonb);
   v_payload_metier jsonb;
   v_operation_texte text;
   v_operation_id uuid;

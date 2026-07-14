@@ -107,6 +107,12 @@ function signature(name, types) {
   return `${name.toLowerCase()}(${types.join(",")})`;
 }
 
+const qualifiedSpecialExpressionPattern = /pg_catalog\s*\.\s*(?:coalesce|nullif|greatest|least)\s*\(/i;
+
+export function hasQualifiedSpecialExpression(source) {
+  return qualifiedSpecialExpressionPattern.test(source);
+}
+
 export function parseFunctionDefinitions(sql) {
   const definitions = [];
   const pattern = /\bcreate\s+(?:or\s+replace\s+)?function\s+([a-z_][a-z0-9_$]*(?:\.[a-z_][a-z0-9_$]*)?)\s*\(/gi;

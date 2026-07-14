@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  hasQualifiedSpecialExpression,
   parseFunctionDefinitions,
   parseFunctionRevokes,
   validateSecurityDefiners
@@ -37,4 +38,25 @@ test("chaque SECURITY DEFINER exige son propre REVOKE PUBLIC", () => {
   assert.deepEqual(validation.errors, [
     "fixture.sql: public.exemple(bigint,jsonb): REVOKE PUBLIC exact manquant"
   ]);
+});
+
+test("les constructions SQL speciales ne peuvent pas etre qualifiees par pg_catalog", () => {
+  for (const source of [
+    "pg_catalog.coalesce(p_action, ''::text)",
+    "PG_CATALOG . NULLIF (valeur, ''::text)",
+    "pg_catalog\n.\ngreatest (a, b)",
+    "pg_catalog . least(a, b)"
+  ]) {
+    assert.equal(hasQualifiedSpecialExpression(source), true, source);
+  }
+
+  for (const source of [
+    "coalesce(p_action, ''::text)",
+    "pg_catalog.lower(p_action)",
+    "pg_catalog.btrim(p_action)",
+    "pg_catalog.jsonb_build_object('ok', true)",
+    "pg_catalog.hashtextextended(p_action, 0)"
+  ]) {
+    assert.equal(hasQualifiedSpecialExpression(source), false, source);
+  }
 });

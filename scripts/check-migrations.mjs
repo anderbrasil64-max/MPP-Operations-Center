@@ -1,6 +1,16 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { validateSecurityDefiners } from "./lib/sql-functions.mjs";
+import { hasQualifiedSpecialExpression, validateSecurityDefiners } from "./lib/sql-functions.mjs";
+
+async function collectFiles(directory, extensions) {
+  const collected = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) collected.push(...await collectFiles(entryPath, extensions));
+    else if (extensions.has(path.extname(entry.name))) collected.push(entryPath);
+  }
+  return collected;
+}
 
 const directories = ["supabase/migrations", "supabase/postdeploy-migrations"];
 const files = [];
@@ -20,9 +30,6 @@ for (const file of files) {
   errors.push(...securityContracts.errors);
   if (/mot_de_passe[^\n]*(?::=|=)\s*'[^']+'/i.test(sql)) errors.push(`${file}: valeur de mot de passe litterale`);
   if (/(?:token|secret|webhook)[^\n]*(?::=|=)\s*'[^']{8,}'/i.test(sql)) errors.push(`${file}: valeur sensible litterale`);
-  if (/pg_catalog\.(?:coalesce|nullif|greatest|least)\s*\(/i.test(sql)) {
-    errors.push(`${file}: construction SQL speciale qualifiee comme une fonction`);
-  }
 }
 
 const transitionFile = "supabase/migrations/20260714010811_alpha_0_12_8_1_remove_privileged_password_fallbacks.sql";
@@ -38,6 +45,26 @@ securityDefinerCount += transitionSecurityContracts.count;
 errors.push(...transitionSecurityContracts.errors);
 if (/mot_de_passe[^\n]*(?::=|=)\s*'[^']+'/i.test(transitionSql)) {
   errors.push(`${transitionFile}: fallback credential litteral`);
+}
+
+const sqlAuditRoots = [
+  "supabase/migrations",
+  "supabase/postdeploy-migrations",
+  "supabase/rollback",
+  "supabase/tests",
+  "tests/sql"
+];
+const auditedSources = [];
+for (const directory of sqlAuditRoots) {
+  auditedSources.push(...await collectFiles(directory, new Set([".sql"])));
+}
+auditedSources.push(...await collectFiles("scripts", new Set([".mjs", ".js"])));
+
+for (const file of [...new Set(auditedSources)].sort()) {
+  const source = await readFile(file, "utf8");
+  if (hasQualifiedSpecialExpression(source)) {
+    errors.push(`${file}: construction SQL speciale qualifiee comme une fonction`);
+  }
 }
 
 const names = files.map((file) => path.basename(file));
