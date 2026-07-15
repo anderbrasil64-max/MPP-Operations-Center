@@ -99,20 +99,27 @@ les roles de test qu'il a lui-meme crees.
 
 L'ordre du runner est bloquant et teste par `tests/unit/database-runner.test.mjs`:
 
-1. Charger la fixture representative 0.12.8, le prerequis 0.12.8.1 puis `01-05`.
-2. Exécuter le contrat owner-only du bootstrap juste après `01`.
-3. Générer en mémoire des hashes synthétiques non suivis par Git pour les précontrôles.
-4. Injecter sur les sept tables un drift volontaire de grants et policies aux noms
+1. Creer un role de deploiement jetable, proprietaire uniquement de sa base de test,
+   sans superdroits, `CREATEDB`, `CREATEROLE`, `BYPASSRLS` ni appartenance a
+   `supabase_admin`; executer `01-05` puis `06` sous ce role et verifier les ACL des
+   objets existants et futurs. Les privileges par defaut des migrations s'appliquent
+   implicitement au role courant, jamais a un proprietaire externe nomme. Le droit
+   global `EXECUTE` de `PUBLIC` est retire avant les restrictions par schema, car un
+   retrait limite a un schema ne peut pas annuler ce droit global PostgreSQL.
+2. Charger la fixture representative 0.12.8, le prerequis 0.12.8.1 puis `01-05`.
+3. Exécuter le contrat owner-only du bootstrap juste après `01`.
+4. Générer en mémoire des hashes synthétiques non suivis par Git pour les précontrôles.
+5. Injecter sur les sept tables un drift volontaire de grants et policies aux noms
    arbitraires, puis appliquer le cutover `06`.
-5. Exécuter une course réelle de réservation Discord avec deux processus `psql`.
-6. Exécuter avant nettoyage les tests SQL `01_security_contracts`,
+6. Exécuter une course réelle de réservation Discord avec deux processus `psql`.
+7. Exécuter avant nettoyage les tests SQL `01_security_contracts`,
    `02_session_identity`, `03_discord_concurrency`, `04_admin_authorization`,
    `05_release_state_retention` et `06_admin_idempotency`, puis
    `tests/sql/security-definers.sql`.
-7. Appliquer le nettoyage `07`.
-8. Vérifier le contrat adapté de phase 7: fonctions et colonnes legacy absentes, puis
+8. Appliquer le nettoyage `07`.
+9. Vérifier le contrat adapté de phase 7: fonctions et colonnes legacy absentes, puis
    rejouer les cinq tests fonctionnels compatibles post-nettoyage.
-9. Dans sept bases fraîches supplémentaires, exécuter chaque compensation `01` à `05`,
+10. Dans sept bases fraîches supplémentaires, exécuter chaque compensation `01` à `05`,
    la compensation prédeploy et la compensation cutover à leur phase exacte; vérifier
    les révocations, puis rejouer le chemin forward supporté.
 

@@ -39,19 +39,19 @@ begin
 end;
 $$;
 
-alter default privileges for role postgres in schema public revoke all on tables from public, anon, authenticated;
-alter default privileges for role postgres in schema public revoke all on sequences from public, anon, authenticated;
-alter default privileges for role postgres in schema public revoke execute on functions from public, anon, authenticated;
-
-do $$
-begin
-  if exists (select 1 from pg_catalog.pg_roles where rolname = 'supabase_admin') then
-    execute 'alter default privileges for role supabase_admin in schema public revoke all on tables from public, anon, authenticated';
-    execute 'alter default privileges for role supabase_admin in schema public revoke all on sequences from public, anon, authenticated';
-    execute 'alter default privileges for role supabase_admin in schema public revoke execute on functions from public, anon, authenticated';
-  end if;
-end;
-$$;
+-- Les privileges par defaut s'appliquent au role de deploiement courant. Les
+-- objets deja presents restent securises par les REVOKE explicites ci-dessous
+-- et par le cutover de privileges dedie.
+-- PostgreSQL accorde EXECUTE a PUBLIC globalement par defaut; le retrait global
+-- est donc necessaire avant les restrictions propres a chaque schema.
+alter default privileges
+  revoke execute on functions from public, anon, authenticated;
+alter default privileges in schema public
+  revoke all on tables from public, anon, authenticated;
+alter default privileges in schema public
+  revoke all on sequences from public, anon, authenticated;
+alter default privileges in schema public
+  revoke execute on functions from public, anon, authenticated;
 
 alter table public.joueurs
   add column if not exists mot_de_passe_hash text,
@@ -190,9 +190,12 @@ revoke all on all tables in schema app_private from public, anon, authenticated;
 revoke all on all sequences in schema app_private from public, anon, authenticated;
 revoke all on function app_private.credential_hash(text) from public, anon, authenticated;
 revoke all on function app_private.verrou_auth_joueur(bigint) from public, anon, authenticated;
-alter default privileges for role postgres in schema app_private revoke all on tables from public, anon, authenticated;
-alter default privileges for role postgres in schema app_private revoke all on sequences from public, anon, authenticated;
-alter default privileges for role postgres in schema app_private revoke execute on functions from public, anon, authenticated;
+alter default privileges in schema app_private
+  revoke all on tables from public, anon, authenticated;
+alter default privileges in schema app_private
+  revoke all on sequences from public, anon, authenticated;
+alter default privileges in schema app_private
+  revoke execute on functions from public, anon, authenticated;
 
 -- Bootstrap temporaire du premier accès 0.13. Seul le propriétaire SQL de la
 -- fonction peut l'exécuter, uniquement pour un SuperAdmin actif existant dont

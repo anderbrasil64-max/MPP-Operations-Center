@@ -7,6 +7,7 @@ import { generateCutoverSeed } from "./generate-cutover-seed.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const managedRoles = Object.freeze(["anon", "authenticated", "service_role"]);
+const externalOwnerRole = "supabase_admin";
 const databaseTestDirectories = Object.freeze(["supabase/tests/database", "tests/sql"]);
 
 export const migrationPlan = Object.freeze([
@@ -326,6 +327,7 @@ function runPsql(argumentsList, options = {}) {
   const environment = {
     ...process.env,
     PGDATABASE: options.database || "postgres",
+    PGUSER: options.user || process.env.PGUSER || "postgres",
     PGAPPNAME: "mpp-ephemeral-tests"
   };
 
@@ -357,9 +359,9 @@ async function sqlCommand(command, options = {}) {
   return runPsql(["--command", command], options);
 }
 
-async function sqlFile(file, database) {
+async function sqlFile(file, database, options = {}) {
   console.info(`[database] ${file}`);
-  await runPsql(["--file", path.join(root, file)], { database });
+  await runPsql(["--file", path.join(root, file)], { database, user: options.user });
 }
 
 function lastOutputLine(output) {
@@ -506,32 +508,22 @@ async function executeDatabasePhase(phase, database, testPlan) {
   }
 }
 
-async function existingManagedRoles() {
-  const list = managedRoles.map((role) => `'${role}'`).join(",");
-  const output = await runPsql([
-    "--tuples-only",
-    "--no-align",
-    "--command",
-    `select rolname from pg_catalog.pg_roles where rolname in (${list}) order by rolname;`
-  ], { capture: true });
-  return new Set(output.split(/\r?\n/).filter(Boolean));
-}
-
 async function removeCreatedRoles(roles) {
   if (!roles.length) return;
   const identifiers = roles.map(quoteIdentifier).join(", ");
   await sqlCommand(`drop role if exists ${identifiers};`);
 }
 
-async function withEphemeralDatabase(target, label, callback) {
+async function withEphemeralDatabase(target, label, callback, options = {}) {
   const safeLabel = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   const databaseName = `mpp_${safeLabel}_${process.pid}_${randomBytes(5).toString("hex")}`;
   const quotedDatabase = quoteIdentifier(databaseName);
+  const ownerClause = options.owner ? ` owner ${quoteIdentifier(options.owner)}` : "";
   let created = false;
 
   try {
     console.info(`[database] creation base isolee: ${label}`);
-    await sqlCommand(`create database ${quotedDatabase} template template0 encoding 'UTF8';`, {
+    await sqlCommand(`create database ${quotedDatabase}${ownerClause} template template0 encoding 'UTF8';`, {
       database: target.database
     });
     created = true;
@@ -546,11 +538,154 @@ async function withEphemeralDatabase(target, label, callback) {
   }
 }
 
-async function applyMigrationFiles(files, database) {
+async function applyMigrationFiles(files, database, options = {}) {
   for (const file of files) {
-    await sqlFile(file, database);
-    if (file === migrationPlan[2]) await sqlFile(ownerBootstrapContract, database);
+    await sqlFile(file, database, options);
+    if (file === migrationPlan[2]) await sqlFile(ownerBootstrapContract, database, options);
   }
+}
+
+async function roleNames() {
+  const output = await runPsql([
+    "--tuples-only",
+    "--no-align",
+    "--command",
+    "select rolname from pg_catalog.pg_roles order by rolname;"
+  ], { capture: true });
+  return new Set(output.split(/\r?\n/).filter(Boolean));
+}
+
+async function createTestRole(role, attributes) {
+  await sqlCommand(`create role ${quoteIdentifier(role)} ${attributes};`);
+}
+
+async function ensureManagedTestRoles(existingRoles) {
+  for (const role of managedRoles) {
+    if (!existingRoles.has(role)) await createTestRole(role, "nologin");
+  }
+  if (!existingRoles.has(externalOwnerRole)) {
+    await createTestRole(externalOwnerRole, "nologin nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls");
+  }
+}
+
+async function assertRestrictedDeploymentRole(database, deployerRole) {
+  const externalOwner = sqlLiteral(externalOwnerRole);
+  await runPsql(["--file=-"], {
+    database,
+    user: deployerRole,
+    input: `do $restricted_role_contract$
+declare
+  v_role pg_catalog.pg_roles%rowtype;
+  v_external_change_refused boolean := false;
+begin
+  select * into strict v_role
+  from pg_catalog.pg_roles
+  where rolname = current_user;
+
+  if v_role.rolsuper or v_role.rolcreatedb or v_role.rolcreaterole
+     or v_role.rolreplication or v_role.rolbypassrls then
+    raise exception 'Restricted deployment role has elevated attributes.';
+  end if;
+  if pg_catalog.pg_has_role(current_user, ${externalOwner}, 'MEMBER') then
+    raise exception 'Restricted deployment role inherited the external owner.';
+  end if;
+
+  begin
+    execute 'alter default privileges ' || 'for role '
+      || pg_catalog.quote_ident(${externalOwner})
+      || ' in schema public revoke all on tables from public';
+  exception
+    when insufficient_privilege then
+      v_external_change_refused := true;
+  end;
+
+  if not v_external_change_refused then
+    raise exception 'Restricted deployment role unexpectedly changed external defaults.';
+  end if;
+end;
+$restricted_role_contract$;`
+  });
+}
+
+async function assertRestrictedDeploymentPrivileges(database, deployerRole) {
+  await runPsql(["--file=-"], {
+    database,
+    user: deployerRole,
+    input: `
+      create table public.mpp_future_public_table(id bigint);
+      create sequence public.mpp_future_public_sequence;
+      create function public.mpp_future_public_function() returns integer
+        language sql set search_path = '' as 'select 1';
+      create table app_private.mpp_future_private_table(id bigint);
+      create sequence app_private.mpp_future_private_sequence;
+      create function app_private.mpp_future_private_function() returns integer
+        language sql set search_path = '' as 'select 1';
+    `
+  });
+
+  await runPsql(["--file=-"], {
+    database,
+    input: `do $deployment_acl_contract$
+declare
+  v_schema text;
+  v_role name;
+begin
+  foreach v_schema in array array['public', 'app_private'] loop
+    foreach v_role in array array['anon'::name, 'authenticated'::name] loop
+      if pg_catalog.has_table_privilege(v_role, v_schema || '.mpp_future_' ||
+        case when v_schema='public' then 'public' else 'private' end || '_table', 'SELECT') then
+        raise exception 'Future table privilege contract failed.';
+      end if;
+      if pg_catalog.has_sequence_privilege(v_role, v_schema || '.mpp_future_' ||
+        case when v_schema='public' then 'public' else 'private' end || '_sequence', 'USAGE') then
+        raise exception 'Future sequence privilege contract failed.';
+      end if;
+      if pg_catalog.has_function_privilege(v_role, v_schema || '.mpp_future_' ||
+        case when v_schema='public' then 'public' else 'private' end || '_function()', 'EXECUTE') then
+        raise exception 'Future function privilege contract failed.';
+      end if;
+    end loop;
+  end loop;
+
+  if exists (
+    select 1
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+    cross join lateral pg_catalog.aclexplode(
+      coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))
+    ) acl
+    where n.nspname in ('public','app_private')
+      and p.proname in ('mpp_future_public_function','mpp_future_private_function')
+      and acl.grantee=0::oid
+      and acl.privilege_type='EXECUTE'
+  ) then
+    raise exception 'Future function retained PUBLIC execution.';
+  end if;
+
+  if pg_catalog.has_function_privilege('anon', 'app_private.credential_hash(text)', 'EXECUTE')
+     or pg_catalog.has_function_privilege('authenticated', 'app_private.credential_hash(text)', 'EXECUTE') then
+    raise exception 'Existing private function privilege contract failed.';
+  end if;
+end;
+$deployment_acl_contract$;`
+  });
+}
+
+async function runRestrictedDeployerScenario(target, deployerRole) {
+  await withEphemeralDatabase(target, "restricted-deployer-01-06", async (databaseName) => {
+    await assertRestrictedDeploymentRole(databaseName, deployerRole);
+    await applyMigrationFiles(migrationPlan, databaseName, { user: deployerRole });
+    await assertRestrictedDeploymentPrivileges(databaseName, deployerRole);
+    await runPsql(["--file=-"], {
+      database: databaseName,
+      user: deployerRole,
+      input: generateCutoverSeed()
+    });
+    await sqlFile(cutoverDriftFixture, databaseName, { user: deployerRole });
+    await sqlFile(cutoverMigration, databaseName, { user: deployerRole });
+    await sqlFile("supabase/tests/contracts/02_no_public_table_access.sql", databaseName, { user: deployerRole });
+    console.info("[database] succes role de deploiement non-superutilisateur: 01-06 et ACL futures");
+  }, { owner: deployerRole });
 }
 
 async function runCompensationScenario(scenario, database) {
@@ -592,11 +727,21 @@ export async function runDatabaseTests() {
   if (majorVersion !== 17) throw new Error(`PostgreSQL 17 requis; version majeure detectee: ${majorVersion || "inconnue"}.`);
 
   const testPlan = await discoverSqlTestPlan();
-  const rolesBefore = await existingManagedRoles();
+  const rolesBefore = await roleNames();
   const rolesToRemove = managedRoles.filter((role) => !rolesBefore.has(role));
+  if (!rolesBefore.has(externalOwnerRole)) rolesToRemove.push(externalOwnerRole);
+  const deployerRole = `mpp_deployer_${process.pid}_${randomBytes(5).toString("hex")}`;
+  rolesToRemove.unshift(deployerRole);
   let primaryError;
 
   try {
+    await ensureManagedTestRoles(rolesBefore);
+    await createTestRole(
+      deployerRole,
+      "login nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls"
+    );
+    await runRestrictedDeployerScenario(target, deployerRole);
+
     await withEphemeralDatabase(target, "full-forward", async (databaseName) => {
       for (const phase of databaseExecutionOrder) {
         await executeDatabasePhase(phase, databaseName, testPlan);

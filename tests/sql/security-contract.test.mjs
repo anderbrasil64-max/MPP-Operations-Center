@@ -37,6 +37,24 @@ test("chaque signature SECURITY DEFINER controle son search_path et son REVOKE",
   assert.equal(signatures, 24);
 });
 
+test("les privileges par defaut ne ciblent aucun proprietaire externe", async () => {
+  for (const { file, sql } of await sql013()) {
+    assert.doesNotMatch(
+      sql,
+      /alter\s+default\s+privileges\s+for\s+(?:role|user)\b/i,
+      file,
+    );
+  }
+  const fondation = await readFile(
+    "supabase/migrations/20260714090000_alpha_0_13_0_01_security_foundation.sql",
+    "utf8",
+  );
+  assert.match(
+    fondation,
+    /alter\s+default\s+privileges\s+revoke\s+execute\s+on\s+functions\s+from\s+public,\s*anon,\s*authenticated/i,
+  );
+});
+
 test("la presence joueur derive l'identite de la session", async () => {
   const sessions = await readFile("supabase/migrations/20260714092000_alpha_0_13_0_03_short_lived_sessions.sql", "utf8");
   const sql = await readFile("supabase/migrations/20260714093000_alpha_0_13_0_04_session_application_apis.sql", "utf8");

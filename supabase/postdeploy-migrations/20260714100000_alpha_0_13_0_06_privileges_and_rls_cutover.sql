@@ -155,19 +155,16 @@ begin
 end;
 $cutover_revoke$;
 
-alter default privileges for role postgres in schema public revoke all on tables from public, anon, authenticated;
-alter default privileges for role postgres in schema public revoke all on sequences from public, anon, authenticated;
-alter default privileges for role postgres in schema public revoke execute on functions from public, anon, authenticated;
-
-do $$
-begin
-  if exists (select 1 from pg_catalog.pg_roles where rolname='supabase_admin') then
-    execute 'alter default privileges for role supabase_admin in schema public revoke all on tables from public, anon, authenticated';
-    execute 'alter default privileges for role supabase_admin in schema public revoke all on sequences from public, anon, authenticated';
-    execute 'alter default privileges for role supabase_admin in schema public revoke execute on functions from public, anon, authenticated';
-  end if;
-end;
-$$;
+-- Le cutover renforce les objets existants explicitement et conserve des
+-- privileges par defaut minimaux pour le role de deploiement courant.
+alter default privileges
+  revoke execute on functions from public, anon, authenticated;
+alter default privileges in schema public
+  revoke all on tables from public, anon, authenticated;
+alter default privileges in schema public
+  revoke all on sequences from public, anon, authenticated;
+alter default privileges in schema public
+  revoke execute on functions from public, anon, authenticated;
 
 do $cutover_postconditions$
 declare

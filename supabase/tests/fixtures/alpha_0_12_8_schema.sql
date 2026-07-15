@@ -15,7 +15,7 @@ begin
 end;
 $fixture_roles$;
 
-create schema if not exists extensions authorization postgres;
+create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
 
 grant usage on schema public to anon, authenticated, service_role;

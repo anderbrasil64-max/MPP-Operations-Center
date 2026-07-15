@@ -105,6 +105,17 @@ test("le probe Discord lance deux processus psql derriere une barriere partagee"
   assert.match(runner, /runPsql\(\[/);
 });
 
+test("le runner reproduit un deploiement sans superdroits ni heritage proprietaire", async () => {
+  const runner = await readFile("scripts/run-database-tests.mjs", "utf8");
+  assert.match(runner, /restricted-deployer-01-06/);
+  assert.match(runner, /nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls/);
+  assert.match(runner, /pg_has_role\(current_user, \$\{externalOwner\}, 'MEMBER'\)/);
+  assert.match(runner, /v_external_change_refused/);
+  assert.match(runner, /applyMigrationFiles\(migrationPlan, databaseName, \{ user: deployerRole \}\)/);
+  assert.match(runner, /assertRestrictedDeploymentPrivileges/);
+  assert.match(runner, /02_no_public_table_access\.sql/);
+});
+
 test("les contrats lies a la phase 6 restent pre-nettoyage uniquement", () => {
   const plan = createSqlTestPlan([
     "tests/sql/security-definers.sql",

@@ -65,6 +65,9 @@ for (const file of [...new Set(auditedSources)].sort()) {
   if (hasQualifiedSpecialExpression(source)) {
     errors.push(`${file}: construction SQL speciale qualifiee comme une fonction`);
   }
+  if (/alter\s+default\s+privileges\s+for\s+(?:role|user)\b/i.test(source)) {
+    errors.push(`${file}: privileges par defaut cibles sur un proprietaire externe`);
+  }
 }
 
 const names = files.map((file) => path.basename(file));
