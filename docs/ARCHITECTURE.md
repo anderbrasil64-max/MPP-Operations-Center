@@ -100,7 +100,7 @@ et textes metier sont neutralises avant envoi.
 ## Publication
 
 `scripts/build-site.mjs` copie une liste blanche dans `site-dist/`. Le validateur exige
-exactement 20 fichiers runtime et refuse notamment `supabase/`, `.github/`, SQL,
+exactement 21 fichiers runtime et refuse notamment `supabase/`, `.github/`, SQL,
 TypeScript serveur, tests, scripts, docs, sauvegardes, `.env` et cles privees. Le
 workflow Pages charge `site-dist/`, jamais la racine du depot.
 

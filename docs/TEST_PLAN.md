@@ -24,7 +24,7 @@ Couverture attendue:
 - contrats statiques migrations, `search_path`, grants/revokes et signatures RPC/Edge;
 - unitaires UI/dialogue/focus, session-store, domaines et redaction logger;
 - Edge simule: auth/CORS, corps 400/413, mentions, snapshots, retries, timeout, deadline;
-- build/manifeste des 20 fichiers Pages et refus des chemins techniques;
+- build/manifeste des 21 fichiers Pages et refus des chemins techniques;
 - Playwright desktop/mobile servi depuis `site-dist/`: joueur, Officier, SuperAdmin,
   refus, expiration, clavier, modales, responsive, CSP et axe serious/critical.
 

@@ -2,7 +2,7 @@
   "use strict";
 
   global.MPP_CONFIG = Object.freeze({
-    version: "Alpha 0.13.0 - Security & Reliability",
+    version: "Alpha 0.13.0.2 - Security & Reliability",
     supabaseUrl: "https://icguokxqrnqdjafqvzyz.supabase.co",
     supabasePublishableKey: "sb_publishable_Twp9mcx7CQdS_weNNUPtTQ_8V1s_Z_R",
     playerSessionStorageKey: "mpp_player_session_v1",

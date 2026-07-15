@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Orchestrateur frontend
-   Version Alpha 0.13.0 - Security & Reliability
+   Version Alpha 0.13.0.2 - Security & Reliability
    ========================================================== */
 
 (function initialiserMPP(global) {
@@ -193,12 +193,14 @@
       boutons.push(UI.bouton("Accéder à l’espace officier", demanderAccesOfficier, { className: "secondary-button" }));
     }
     boutons.push(UI.bouton("Se déconnecter", deconnexion, { className: "secondary-button" }));
+    const actionsAccueil = UI.actions(boutons);
+    actionsAccueil.classList.add("home-actions");
     UI.afficher(UI.panneau("Accueil", [
       UI.element("p", { className: "connected-user" }, "Connecté : " + joueur.pseudo),
       UI.element("p", {}, "Rôles : " + (joueur.roles || "Aucun")),
       discord,
-      UI.actions(boutons)
-    ]));
+      actionsAccueil
+    ], "form-zone home-screen"));
   }
 
   function formulaireCredential(options) {
@@ -442,22 +444,62 @@
     const resultat = await appelAPI("chargerDonneesOfficierInitiales");
     if (!estSucces(resultat)) return gererErreurAdmin(resultat, afficherAccueilConnecte);
     const stats = UI.element("div", { className: "dashboard-grid" }, [
-      carteStat("Joueurs actifs", resultat.joueurs?.actifs || 0),
-      carteStat("Connexions 7 jours", resultat.joueurs?.connectes7Jours || 0),
-      carteStat("Compétitions ouvertes", resultat.competitions?.ouvertes || 0),
-      carteStat("Compétitions fermées", resultat.competitions?.fermees || 0)
+      carteTableauDeBord("👥 Joueurs", [
+        ["Total", resultat.joueurs?.total || 0],
+        ["🟢 Actifs", resultat.joueurs?.actifs || 0],
+        ["⚪ Inactifs", resultat.joueurs?.inactifs || 0],
+        ["🔴 Suspendus", resultat.joueurs?.suspendus || 0]
+      ]),
+      carteTableauDeBord("🕊️ Activité", [
+        ["Connectés ≤ 7 jours", resultat.joueurs?.connectes7Jours || 0],
+        ["Connectés ≤ 30 jours", resultat.joueurs?.connectes30Jours || 0],
+        ["Inactifs > 30 jours", resultat.joueurs?.inactifs30Jours || 0],
+        ["Jamais connectés", resultat.joueurs?.jamaisConnectes || 0]
+      ]),
+      carteTableauDeBord("🏆 Compétitions", [
+        ["🟢 Ouvertes", resultat.competitions?.ouvertes || 0],
+        ["🟠 Brouillons", resultat.competitions?.brouillon || 0],
+        ["🔒 Fermées", resultat.competitions?.fermees || 0],
+        ["📦 Archivées", resultat.competitions?.archivees || 0]
+      ])
     ]);
-    const actions = [
+    const actionsPrincipales = UI.actions([
       UI.bouton("Présences du jour", afficherAujourdHuiOfficier),
       UI.bouton("Consulter les présences", afficherSelectionCompetitionOfficier),
-      UI.bouton("Gestion des joueurs", afficherGestionJoueurs, { className: "secondary-button" }),
-      UI.bouton("Gestion des compétitions", afficherGestionCompetitions, { className: "secondary-button" }),
-      UI.bouton("Journal d’activité", afficherJournalActivite, { className: "secondary-button" }),
+      UI.bouton("Gérer les compétitions", afficherGestionCompetitions, { className: "secondary-button" }),
+      UI.bouton("Gérer les joueurs", afficherGestionJoueurs, { className: "secondary-button" }),
+      UI.bouton("Journal d’activité", afficherJournalActivite, { className: "secondary-button" })
+    ]);
+    actionsPrincipales.classList.add("officer-primary-actions");
+    const actionsSecondaires = [
       UI.bouton("Modifier mon mot de passe", afficherChangerMotDePasseAdmin, { className: "secondary-button" })
     ];
-    if (estSuperAdminConnecte()) actions.push(UI.bouton("Demandes Discord", afficherDemandesLiaisonDiscord, { className: "secondary-button" }));
-    actions.push(UI.bouton("Retour à l’accueil", afficherAccueilConnecte, { className: "secondary-button" }));
-    UI.afficher(UI.panneau("Espace officier", [stats, UI.actions(actions)]));
+    if (estSuperAdminConnecte()) actionsSecondaires.push(UI.bouton("Demandes Discord", afficherDemandesLiaisonDiscord, { className: "secondary-button" }));
+    const zoneSecondaire = UI.actions(actionsSecondaires);
+    zoneSecondaire.classList.add("officer-secondary-actions");
+    const retour = UI.actions([
+      UI.bouton("Retour à l’accueil", afficherAccueilConnecte, { className: "secondary-button" })
+    ]);
+    retour.classList.add("officer-return-actions");
+    UI.afficher(UI.panneau("Tableau de bord officier", [
+      UI.element("p", { className: "officer-connected-user" }, "Connecté en tant que : " + (State.etat.utilisateur?.pseudo || "-")),
+      stats,
+      actionsPrincipales,
+      zoneSecondaire,
+      retour
+    ], "form-zone officer-dashboard"));
+  }
+
+  function carteTableauDeBord(titre, lignes) {
+    return UI.element("article", { className: "dashboard-card" }, [
+      UI.element("h3", {}, titre),
+      lignes.map(function ([libelle, valeur]) {
+        return UI.element("p", { className: "dashboard-metric" }, [
+          UI.element("span", {}, libelle + " :"),
+          UI.element("strong", {}, String(valeur))
+        ]);
+      })
+    ]);
   }
 
   function carteStat(libelle, valeur) {

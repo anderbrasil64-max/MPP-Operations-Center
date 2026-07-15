@@ -59,7 +59,7 @@ npm.cmd run build
 npm.cmd run test:artifact
 ```
 
-Le workflow charge uniquement `site-dist/`. Son manifeste exact de 20 fichiers est
+Le workflow charge uniquement `site-dist/`. Son manifeste exact de 21 fichiers est
 controle avant upload; migrations, fonctions serveur, docs, tests et scripts ne sont
 jamais publies.
 

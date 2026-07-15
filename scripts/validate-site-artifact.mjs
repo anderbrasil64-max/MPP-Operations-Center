@@ -12,6 +12,7 @@ const expected = new Set([
   "js/competitions.js",
   "js/dialog.js",
   "js/discord.js",
+  "js/icons.js",
   "js/joueurs.js",
   "js/journal.js",
   "js/logger.js",

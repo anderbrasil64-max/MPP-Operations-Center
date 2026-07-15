@@ -58,8 +58,17 @@ async function installerSupabaseSimule(page, options = {}) {
               if (adminExpiredValue) return { data: { succes: false, code: "SESSION_EXPIREE", message: "Session officier expirée." }, error: null };
               if (params.p_action === "dashboard") return { data: {
                 succes: true,
-                joueurs: { total: 2, actifs: 2, connectes7Jours: 1 },
-                competitions: { ouvertes: 1, fermees: 0 },
+                joueurs: {
+                  total: 2,
+                  actifs: 2,
+                  inactifs: 0,
+                  suspendus: 0,
+                  connectes7Jours: 1,
+                  connectes30Jours: 2,
+                  inactifs30Jours: 0,
+                  jamaisConnectes: 0
+                },
+                competitions: { ouvertes: 1, brouillon: 1, fermees: 0, archivees: 0 },
                 competitionsListe: [competition]
               }, error: null };
               if (params.p_action === "joueurs") return { data: { succes: true, joueurs }, error: null };
@@ -191,12 +200,33 @@ async function auditerAxeEtDebordement(page, nomVue) {
   });
 }
 
+async function auditerIconesBoutons(page, nomVue) {
+  await test.step(`${nomVue}: icones de boutons`, async () => {
+    const erreurs = await page.evaluate(() => [...document.querySelectorAll("button")]
+      .filter((bouton) => bouton.getClientRects().length > 0)
+      .flatMap((bouton) => {
+        const libelle = bouton.textContent.trim();
+        const icone = bouton.querySelector(":scope > svg.button-icon");
+        const problemes = [];
+        if (!libelle && !bouton.getAttribute("aria-label")) problemes.push("nom accessible vide");
+        if (!icone) problemes.push("icone absente");
+        else {
+          if (icone.getAttribute("aria-hidden") !== "true") problemes.push("icone exposee");
+          if (icone.getAttribute("focusable") !== "false") problemes.push("icone focalisable");
+          if (getComputedStyle(icone).color !== getComputedStyle(bouton).color) problemes.push("couleur incoherente");
+        }
+        return problemes.map((probleme) => `${libelle || "[sans texte]"}: ${probleme}`);
+      }));
+    expect(erreurs, `${nomVue}: ${JSON.stringify(erreurs)}`).toEqual([]);
+  });
+}
+
 test("connexion, protection XSS et absence de credential persiste", async ({ page }) => {
   await installerSupabaseSimule(page);
   const consoleErrors = [];
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   await page.goto("/");
-  await expect(page.getByText("Alpha 0.13.0 - Security & Reliability")).toBeVisible();
+  await expect(page.getByText("Alpha 0.13.0.2 - Security & Reliability")).toBeVisible();
   const payload = "<img src=x onerror='globalThis.__xss=1'>";
   await page.getByLabel("Pseudo", { exact: true }).fill(payload);
   await page.getByLabel("Code d’accès", { exact: true }).fill("code-test-valide");
@@ -231,13 +261,16 @@ test("session admin reste uniquement en memoire et la modale accepte Echap", asy
   const bouton = page.getByRole("button", { name: "Accéder à l’espace officier" });
   await bouton.click();
   await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByLabel("Mot de passe administrateur")).toHaveAttribute("autocomplete", "current-password");
+  await expect(page.getByLabel("Mot de passe administrateur")).toHaveAttribute("name", "password");
+  await expect(page.getByRole("dialog").locator("input[name='username']")).toHaveAttribute("autocomplete", "username");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(bouton).toBeFocused();
   await bouton.click();
   await page.getByLabel("Mot de passe administrateur").fill("mot-de-passe-test");
   await page.getByRole("button", { name: "Valider" }).click();
-  await expect(page.getByRole("heading", { name: "Espace officier" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tableau de bord officier" })).toBeVisible();
   const stockage = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
   expect(stockage).not.toContain("mot-de-passe-test");
   expect(stockage).not.toContain("b".repeat(64));
@@ -247,8 +280,10 @@ test("le dashboard officier repose sur l action RPC agregee", async ({ page }) =
   await installerSupabaseSimule(page, { role: "Officier" });
   await connecterJoueur(page, "Officier Test");
   await ouvrirEspaceAdmin(page);
-  await expect(page.getByRole("heading", { name: "Espace officier" })).toBeVisible();
-  await expect(page.getByRole("article").filter({ hasText: "Joueurs actifs" })).toContainText("2");
+  await expect(page.getByRole("heading", { name: "Tableau de bord officier" })).toBeVisible();
+  await expect(page.getByRole("article").filter({ hasText: "👥 Joueurs" })).toContainText("Total :2");
+  await expect(page.getByRole("article").filter({ hasText: "🕊️ Activité" })).toContainText("Connectés ≤ 30 jours :2");
+  await expect(page.getByRole("article").filter({ hasText: "🏆 Compétitions" })).toContainText("🟠 Brouillons :1");
   const actions = await page.evaluate(() => window.__mppCalls
     .filter((item) => item.name === "api_admin_site")
     .map((item) => item.action));
@@ -261,6 +296,88 @@ test("accessibilite critique et largeur mobile", async ({ page }, testInfo) => {
   await page.goto("/");
   await auditerAxeEtDebordement(page, "identification");
   await page.screenshot({ path: testInfo.outputPath("login.png"), fullPage: true });
+});
+
+test("accueil et tableau officier conservent des proportions compactes et responsives", async ({ page }, testInfo) => {
+  await installerSupabaseSimule(page, { role: "SuperAdmin", discordLie: true });
+  await page.addInitScript({ path: require.resolve("axe-core/axe.min.js") });
+  await connecterJoueur(page, "Officier Test");
+  await expect(page.getByRole("heading", { name: "Accueil" })).toBeVisible();
+
+  const accueil = await page.evaluate(() => {
+    const app = document.getElementById("app");
+    const boutons = [...document.querySelectorAll(".home-actions button")].map((bouton) => bouton.getBoundingClientRect());
+    const rect = app.getBoundingClientRect();
+    return {
+      largeur: rect.width,
+      gauche: rect.left,
+      viewport: window.innerWidth,
+      colonnesPremiereLigne: boutons.filter((bouton) => Math.abs(bouton.top - boutons[0].top) < 2).length,
+      debordement: document.documentElement.scrollWidth - document.documentElement.clientWidth
+    };
+  });
+  expect(accueil.largeur).toBeLessThanOrEqual(622);
+  expect(Math.abs(accueil.gauche - ((accueil.viewport - accueil.largeur) / 2))).toBeLessThanOrEqual(2);
+  expect(accueil.colonnesPremiereLigne).toBe(accueil.viewport <= 760 ? 1 : 2);
+  expect(accueil.debordement).toBeLessThanOrEqual(1);
+  await auditerAxeEtDebordement(page, "accueil compact");
+  await auditerIconesBoutons(page, "accueil compact");
+  await page.screenshot({ path: testInfo.outputPath("accueil-corrige.png"), fullPage: true });
+
+  await ouvrirEspaceAdmin(page);
+  await expect(page.getByRole("heading", { name: "Tableau de bord officier" })).toBeVisible();
+  const tableau = await page.evaluate(() => {
+    const app = document.getElementById("app");
+    const cartes = [...document.querySelectorAll(".officer-dashboard .dashboard-card")].map((carte) => carte.getBoundingClientRect());
+    const actions = [...document.querySelectorAll(".officer-primary-actions button")].map((bouton) => bouton.getBoundingClientRect());
+    const retour = document.querySelector(".officer-return-actions button").getBoundingClientRect();
+    const zoneRetour = document.querySelector(".officer-return-actions").getBoundingClientRect();
+    const rect = app.getBoundingClientRect();
+    return {
+      largeur: rect.width,
+      gauche: rect.left,
+      viewport: window.innerWidth,
+      nombreCartes: cartes.length,
+      cartesPremiereLigne: cartes.filter((carte) => Math.abs(carte.top - cartes[0].top) < 2).length,
+      actionsPremiereLigne: actions.filter((bouton) => Math.abs(bouton.top - actions[0].top) < 2).length,
+      retourPleineLargeur: Math.abs(retour.width - zoneRetour.width) < 2,
+      minHeight: getComputedStyle(app).minHeight,
+      debordement: document.documentElement.scrollWidth - document.documentElement.clientWidth
+    };
+  });
+  expect(tableau.largeur).toBeLessThanOrEqual(1102);
+  expect(Math.abs(tableau.gauche - ((tableau.viewport - tableau.largeur) / 2))).toBeLessThanOrEqual(2);
+  expect(tableau.nombreCartes).toBe(3);
+  expect(tableau.cartesPremiereLigne).toBe(tableau.viewport > 1000 ? 3 : (tableau.viewport > 700 ? 2 : 1));
+  expect(tableau.actionsPremiereLigne).toBe(tableau.viewport > 1000 ? 5 : (tableau.viewport > 760 ? 2 : 1));
+  expect(tableau.retourPleineLargeur).toBe(true);
+  expect(tableau.minHeight).toBe("auto");
+  expect(tableau.debordement).toBeLessThanOrEqual(1);
+  await auditerAxeEtDebordement(page, "tableau officier responsive");
+  await auditerIconesBoutons(page, "tableau officier responsive");
+  await page.screenshot({ path: testInfo.outputPath("tableau-officier-corrige.png"), fullPage: true });
+});
+
+test("les boutons et la modale administrateur utilisent les icones locales accessibles", async ({ page }, testInfo) => {
+  await installerSupabaseSimule(page, { role: "SuperAdmin", discordLie: true });
+  await connecterJoueur(page, "Officier Test");
+  await expect(page.getByRole("heading", { name: "Accueil" })).toBeVisible();
+  await auditerIconesBoutons(page, "accueil joueur");
+
+  const acces = page.getByRole("button", { name: "Accéder à l’espace officier" });
+  await expect(acces).toHaveCount(1);
+  await acces.click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await auditerIconesBoutons(page, "modale acces officier");
+  await expect(page.getByLabel("Mot de passe administrateur")).toHaveAttribute("autocomplete", "current-password");
+  await page.screenshot({ path: testInfo.outputPath("modale-action-corrigee.png"), fullPage: true });
+
+  await page.getByLabel("Mot de passe administrateur").fill("mot-de-passe-test");
+  const valider = page.getByRole("dialog").getByRole("button", { name: "Valider" });
+  await expect(valider).toHaveCount(1);
+  await valider.click();
+  await expect(page.getByRole("heading", { name: "Tableau de bord officier" })).toBeVisible();
+  await auditerIconesBoutons(page, "tableau de bord officier");
 });
 
 test("axe et overflow couvrent les ecrans joueur et la modale de presence", async ({ page }) => {
@@ -295,10 +412,10 @@ test("axe et overflow couvrent les ecrans SuperAdmin et leurs modales", async ({
   await auditerAxeEtDebordement(page, "elevation officier");
   await page.getByLabel("Mot de passe administrateur").fill("mot-de-passe-test");
   await page.getByRole("dialog").getByRole("button", { name: "Valider" }).click();
-  await expect(page.getByRole("heading", { name: "Espace officier" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tableau de bord officier" })).toBeVisible();
   await auditerAxeEtDebordement(page, "tableau de bord SuperAdmin");
 
-  await page.getByRole("button", { name: "Gestion des joueurs" }).click();
+  await page.getByRole("button", { name: "Gérer les joueurs" }).click();
   await expect(page.getByRole("heading", { name: "Gestion des joueurs" })).toBeVisible();
   await auditerAxeEtDebordement(page, "gestion joueurs");
   await page.getByRole("button", { name: "Ajouter un joueur" }).click();
@@ -311,7 +428,7 @@ test("axe et overflow couvrent les ecrans SuperAdmin et leurs modales", async ({
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Retour", exact: true }).click();
 
-  await page.getByRole("button", { name: "Gestion des compétitions" }).click();
+  await page.getByRole("button", { name: "Gérer les compétitions" }).click();
   await expect(page.getByRole("heading", { name: "Gestion des compétitions" })).toBeVisible();
   await auditerAxeEtDebordement(page, "gestion competitions");
   await page.getByRole("button", { name: "Créer une compétition" }).click();
@@ -416,7 +533,7 @@ test("les droits Officier masquent les actions SuperAdmin", async ({ page }) => 
   await installerSupabaseSimule(page, { role: "Officier" });
   await connecterJoueur(page, "Officier Test");
   await ouvrirEspaceAdmin(page);
-  await page.getByRole("button", { name: "Gestion des joueurs" }).click();
+  await page.getByRole("button", { name: "Gérer les joueurs" }).click();
   await expect(page.getByRole("heading", { name: "Gestion des joueurs" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Supprimer" })).toHaveCount(0);
   await page.getByRole("button", { name: "Ajouter un joueur" }).click();
@@ -431,7 +548,7 @@ test("un Officier preserve le role SuperAdmin masque d une competition", async (
   await installerSupabaseSimule(page, { role: "Officier" });
   await connecterJoueur(page, "Officier Test");
   await ouvrirEspaceAdmin(page);
-  await page.getByRole("button", { name: "Gestion des compétitions" }).click();
+  await page.getByRole("button", { name: "Gérer les compétitions" }).click();
   await page.getByRole("article").getByRole("button", { name: "Modifier" }).click();
   await expect(page.getByLabel("SuperAdmin", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Enregistrer", exact: true }).click();
@@ -446,7 +563,7 @@ test("le SuperAdmin dispose des controles reserves et des demandes Discord", asy
   await installerSupabaseSimule(page, { role: "SuperAdmin", discordLie: true });
   await connecterJoueur(page, "Officier Test");
   await ouvrirEspaceAdmin(page);
-  await page.getByRole("button", { name: "Gestion des joueurs" }).click();
+  await page.getByRole("button", { name: "Gérer les joueurs" }).click();
   await expect(page.getByRole("button", { name: "Supprimer" }).first()).toBeVisible();
   await page.getByRole("button", { name: "Ajouter un joueur" }).click();
   await expect(page.getByLabel("ID Discord (facultatif)")).toBeVisible();
@@ -463,7 +580,7 @@ test("la creation de competition refuse dates et horaires invalides avant RPC", 
   await installerSupabaseSimule(page, { role: "SuperAdmin", discordLie: true });
   await connecterJoueur(page, "Officier Test");
   await ouvrirEspaceAdmin(page);
-  await page.getByRole("button", { name: "Gestion des compétitions" }).click();
+  await page.getByRole("button", { name: "Gérer les compétitions" }).click();
   await page.getByRole("button", { name: "Créer une compétition" }).click();
   await page.getByLabel("Nom").fill("Compétition validation");
   await page.getByLabel(/Dates/).fill("2026-02-30, 2026-02-30");

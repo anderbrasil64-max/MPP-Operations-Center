@@ -1,7 +1,7 @@
 /* ==========================================================
    MPP OPERATIONS CENTER
    Couche Supabase
-   Version Alpha 0.13.0 - Security & Reliability
+   Version Alpha 0.13.0.2 - Security & Reliability
    ========================================================== */
 
 /*

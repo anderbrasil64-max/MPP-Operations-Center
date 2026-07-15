@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const version = "0.13.0";
-const libelle = "Alpha 0.13.0 - Security & Reliability";
+const version = "0.13.0.2";
+const libelle = "Alpha 0.13.0.2 - Security & Reliability";
 const [html, config, app, supabase, packageJson] = await Promise.all([
   readFile("index.html", "utf8"),
   readFile("js/config.js", "utf8"),
@@ -16,9 +16,9 @@ assert.ok(
   "Le libelle de version HTML est incoherent."
 );
 assert.match(config, new RegExp(libelle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-assert.match(app, /Version Alpha 0\.13\.0 - Security & Reliability/);
-assert.match(supabase, /Version Alpha 0\.13\.0 - Security & Reliability/);
-assert.equal(JSON.parse(packageJson).version, "0.13.0-rc.1");
+assert.match(app, /Version Alpha 0\.13\.0\.2 - Security & Reliability/);
+assert.match(supabase, /Version Alpha 0\.13\.0\.2 - Security & Reliability/);
+assert.equal(JSON.parse(packageJson).version, "0.13.0-rc.3");
 
 const localReferences = [...html.matchAll(/(?:src|href)="(?!https?:|#)([^"?]+)\?v=([^"&]+)"/g)];
 assert.ok(localReferences.length >= 13, "Les ressources locales doivent etre versionnees.");

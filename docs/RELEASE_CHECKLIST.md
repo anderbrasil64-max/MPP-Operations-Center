@@ -47,7 +47,7 @@ Une case non cochee reste bloquante; ne pas transformer un test prepare en test 
 - [ ] Dispatch Pages lance manuellement depuis `main` avec la confirmation exacte
   `DEPLOY ALPHA 0.13.0 - Security & Reliability`, les six attestations et l'accord
   de l'environnement si configure.
-- [ ] Pages publie uniquement les 20 fichiers de `site-dist/`.
+- [ ] Pages publie uniquement les 21 fichiers de `site-dist/`.
 - [ ] Cutover `06` applique seulement apres smoke tests frontend/Edge.
 - [ ] Cron reactives un par un; maintenance quotidienne configuree et observee.
 - [ ] Nettoyage `07` laisse pour une fenetre ulterieure et une approbation distincte.

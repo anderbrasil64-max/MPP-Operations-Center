@@ -3,6 +3,7 @@
 
   const contenu = document.getElementById("contenu");
   const zoneStatut = document.getElementById("app-status");
+  const application = document.getElementById("app");
 
   function texte(valeur) {
     return document.createTextNode(String(valeur ?? ""));
@@ -40,14 +41,18 @@
 
   function bouton(libelle, action, options) {
     const opts = options || {};
-    return element("button", {
+    const controle = element("button", {
       type: opts.type || "button",
       className: opts.className || "",
       disabled: opts.disabled === true,
       title: opts.title || null,
       ariaLabel: opts.ariaLabel || null,
       on: action ? { click: action } : null
-    }, libelle);
+    });
+    const nomIcone = opts.icon || global.MPPIcons?.nomPourAction(libelle);
+    if (nomIcone && opts.icon !== false) controle.appendChild(global.MPPIcons.creerIcone(nomIcone));
+    controle.appendChild(element("span", { className: "button-label" }, libelle));
+    return controle;
   }
 
   function champ(options) {
@@ -113,6 +118,12 @@
   }
 
   function afficher(page, options) {
+    if (application) {
+      application.classList.remove("layout-compact", "layout-officer", "layout-wide");
+      if (page.matches(".auth-form, .home-screen")) application.classList.add("layout-compact");
+      else if (page.matches(".officer-dashboard")) application.classList.add("layout-officer");
+      else application.classList.add("layout-wide");
+    }
     contenu.replaceChildren(page);
     contenu.setAttribute("aria-busy", options?.busy === true ? "true" : "false");
     const titre = options?.focus || page.querySelector("h2, h1, [tabindex='-1']");

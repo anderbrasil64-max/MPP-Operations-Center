@@ -108,12 +108,29 @@ button {
   width: 100%;
   padding: 12px;
   margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   background: #C94F00;
   color: white;
   border: none;
   border-radius: 6px;
   font-weight: bold;
   cursor: pointer;
+}
+
+.button-icon {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  color: currentColor;
+  pointer-events: none;
+}
+
+.button-label {
+  min-width: 0;
+  text-align: center;
 }
 
 button:hover {
@@ -128,8 +145,8 @@ html {
 
 body {
   box-sizing: border-box;
-  padding: 24px;
-  align-items: flex-start;
+  padding: 20px;
+  align-items: center;
 }
 
 *,
@@ -140,9 +157,43 @@ body {
 
 .login-card,
 .login-card.mode-large {
-  width: min(1180px, 100%);
+  width: min(94vw, 1180px);
   max-width: 1180px;
   min-height: auto;
+  margin: auto;
+}
+
+.login-card.layout-compact {
+  width: min(92vw, 620px);
+  max-width: 620px;
+}
+
+.login-card.layout-officer {
+  width: min(94vw, 1100px);
+  max-width: 1100px;
+}
+
+.logo-zone {
+  margin-bottom: 18px;
+}
+
+.logo-mpp {
+  width: 108px;
+  height: 108px;
+  margin-bottom: 8px;
+}
+
+.logo-zone h1 {
+  font-size: 2rem;
+  letter-spacing: 0;
+}
+
+.logo-zone > p:first-of-type {
+  margin: 10px 0 0;
+}
+
+#version-site {
+  margin: 6px 0 0;
 }
 
 .auth-form {
@@ -212,6 +263,11 @@ select {
   min-height: 1.4rem;
   margin-bottom: 8px;
   text-align: center;
+}
+
+.app-status:empty {
+  min-height: 0;
+  margin: 0;
 }
 
 .app-status.success {
@@ -289,6 +345,94 @@ fieldset > legend {
 
 .page-actions {
   margin-top: 18px;
+}
+
+.home-screen > h2 {
+  margin: 0 0 20px;
+}
+
+.home-screen > p {
+  margin: 0 0 10px;
+}
+
+.home-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.home-actions button,
+.officer-primary-actions button,
+.officer-secondary-actions button,
+.officer-return-actions button {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  margin-top: 0;
+  white-space: normal;
+}
+
+.officer-dashboard > h2 {
+  margin: 0 0 8px;
+}
+
+.officer-connected-user {
+  margin: 0 0 16px;
+}
+
+.officer-dashboard .dashboard-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin: 16px 0 18px;
+}
+
+.officer-dashboard .dashboard-card {
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+}
+
+.officer-dashboard .dashboard-card h3 {
+  margin: 0 0 12px;
+}
+
+.dashboard-metric {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0;
+}
+
+.dashboard-metric strong {
+  color: #FFFFFF;
+  font-variant-numeric: tabular-nums;
+}
+
+.officer-primary-actions,
+.officer-secondary-actions,
+.officer-return-actions {
+  display: grid;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.officer-primary-actions {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-top: 0;
+}
+
+.officer-secondary-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.officer-return-actions {
+  grid-template-columns: 1fr;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #4B6B3C;
 }
 
 .loading-zone {
@@ -557,7 +701,7 @@ fieldset > legend {
 
 @media (max-width: 760px) {
   body {
-    padding: 10px;
+    padding: 16px;
   }
 
   .login-card,
@@ -569,6 +713,16 @@ fieldset > legend {
   .logo-mpp {
     width: 96px;
     height: 96px;
+  }
+
+  .logo-zone h1 {
+    font-size: 1.65rem;
+  }
+
+  .home-actions,
+  .officer-primary-actions,
+  .officer-secondary-actions {
+    grid-template-columns: 1fr;
   }
 
   .presence-date-row,
@@ -1623,6 +1777,15 @@ button:disabled {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
+
+  .officer-dashboard .dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .officer-primary-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
 }
 
 @media (max-width: 900px) {
@@ -1633,7 +1796,7 @@ button:disabled {
 
   .login-card,
   .login-card.mode-large {
-    width: 95vw;
+    width: 100%;
     min-height: auto;
   }
 
@@ -1723,4 +1886,15 @@ button:disabled {
 .nb-horaires {
     font-size: 11px;
     margin-top: 2px;
+}
+
+@media (max-width: 700px) {
+  .officer-dashboard .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .officer-primary-actions,
+  .officer-secondary-actions {
+    grid-template-columns: 1fr;
+  }
 }

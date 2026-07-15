@@ -1,5 +1,13 @@
 # Changelog
 
+## Alpha 0.13.0.2 - Icônes d’actions (prévisualisation locale)
+
+- Ajoute un registre SVG local et sûr pour les boutons, sans dépendance externe ni
+  modification des noms accessibles.
+- Conserve les proportions validées de l’accueil et du tableau de bord Officier sur
+  desktop, tablette et mobile.
+- Porte le manifeste Pages à 21 fichiers runtime avec `js/icons.js`.
+
 ## Alpha 0.13.0 - Security & Reliability (release candidate)
 
 > Etat: prepare localement. Ce journal ne signifie ni migration appliquee, ni Edge
@@ -35,7 +43,7 @@
   focus/clavier, responsive, metadonnees gestionnaire de mots de passe et favicon.
 - Ajoute outillage npm epingle, tests statiques/unitaires/Edge/Playwright/accessibilite,
   contrats SQL, CI Deno et controles de securite.
-- GitHub Pages construit un artefact exact de 20 fichiers en liste blanche, jamais la
+- GitHub Pages construit un artefact exact de 21 fichiers en liste blanche, jamais la
   racine du depot.
 - Ajoute documentation d'architecture, migrations `01-07`, compensations, deploiement,
   rollback, tests, exploitation, sauvegarde et rotation/nettoyage historique.
